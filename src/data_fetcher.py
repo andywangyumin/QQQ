@@ -72,12 +72,13 @@ def fetch_option_iv(strike: float, expiry_str: str,
                     fallback_hv: float = 0.20) -> float:
     """
     从 yfinance 期权链获取指定行权价附近的隐含波动率。
+    yfinance IV 与 HV20 加权混合（7:3），缓解 yfinance 远月 IV 偏高问题。
     若找不到，回退到历史波动率 fallback_hv。
     """
     target = datetime.strptime(expiry_str, "%Y-%m-%d").date()
     try:
         ticker = yf.Ticker("QQQ")
-        available = list(ticker.options)      # ['2026-12-18', '2027-01-15', ...]
+        available = list(ticker.options)
         if not available:
             log.warning("yfinance 未返回 QQQ 期权到期日列表，使用 HV 回退")
             return fallback_hv
@@ -89,16 +90,20 @@ def fetch_option_iv(strike: float, expiry_str: str,
         if calls.empty:
             return fallback_hv
 
-        # 找到最近的行权价
-        idx = (calls["strike"] - strike).abs().idxmin()
-        iv = float(calls.loc[idx, "impliedVolatility"])
+        # 取最近行权价的 IV，同时取周边 ±2 档均值，降低单点噪声
+        sorted_calls = calls.iloc[(calls["strike"] - strike).abs().argsort()]
+        iv_sample = sorted_calls["impliedVolatility"].head(3).values
+        iv_raw = float(np.median(iv_sample))
 
-        # yfinance 有时返回 0 或极端值
-        if iv <= 0.01 or iv > 2.0:
-            log.warning(f"IV={iv:.3f} 异常，回退到 HV")
+        if iv_raw <= 0.01 or iv_raw > 2.0:
+            log.warning(f"IV={iv_raw:.3f} 异常，回退到 HV")
             return fallback_hv
 
-        return float(np.clip(iv, 0.10, 0.80))
+        # yfinance 远月 IV 系统性偏高，与 HV20 加权混合（7:3）校正
+        iv_blended = 0.70 * iv_raw + 0.30 * fallback_hv
+        iv_final   = float(np.clip(iv_blended, 0.10, 0.80))
+        log.debug(f"IV 校正：yfinance={iv_raw:.3f}  HV20={fallback_hv:.3f}  混合={iv_final:.3f}")
+        return iv_final
 
     except Exception as e:
         log.warning(f"获取期权 IV 失败（{e}），使用 HV 回退")
