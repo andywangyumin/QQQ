@@ -227,17 +227,19 @@ class LarkNotifier:
             expiry_str   = str(pos["expiry"])
             expiry_short = expiry_str[5:] if len(expiry_str) >= 7 else expiry_str
 
-            # 左列第4行：直接嵌入信号标签，不再单独输出一行 note，避免重复
+            # 左列第4行：信号类型明确显示，格式统一为 "图标 类型：说明"
             if sig_type == "ROLL_OUT":
-                sig_tag = f"⚠️ DTE {dte}天，需续杯换期"
+                sig_tag = f"🟡 ROLL OUT：DTE {dte}天，需续杯换期"
             elif sig_type == "ROLL_OUT_BLOCKED":
-                sig_tag = f"⚠️ DTE {dte}天，需续杯但现金不足"
+                sig_tag = f"⚠️ ROLL OUT：DTE {dte}天，现金不足"
             elif sig_type == "HARVEST":
-                sig_tag = f"🟢 Delta {delta:.3f}，触发收割信号"
-            elif sig_type in ("BEAR_ADD", "BEAR_ADD_COOLDOWN"):
-                sig_tag = f"🔴 Delta {delta:.3f}，触发加仓信号"
+                sig_tag = f"🟢 HARVEST：Delta {delta:.3f}，触发收割"
+            elif sig_type == "BEAR_ADD":
+                sig_tag = f"🔴 BEAR ADD：Delta {delta:.3f}，触发加仓"
+            elif sig_type == "BEAR_ADD_COOLDOWN":
+                sig_tag = f"🟠 BEAR ADD：冷却中，Delta {delta:.3f}"
             else:
-                sig_tag = "✅ HOLD：无操作"
+                sig_tag = f"✅ HOLD：DTE {dte}天，持仓观望"
 
             # 左列固定4行：ID / 行权价 / 到期+DTE / 信号标签
             left = (
@@ -277,12 +279,9 @@ class LarkNotifier:
             elements += self._operation_block(sig)
             elements.append(self._hr())
 
-        # ── 底部备注（拆为两行，避免截断）────────────────────────────────
+        # ── 底部备注（合并为一行）────────────────────────────────────────
         elements.append(self._note(
-            f"基准：{self._usd(baseline)}（2026-05-24 设定）　价格为 Black-Scholes 估算，仅供参考"
-        ))
-        elements.append(self._note(
-            "实际操作以市场报价为准，深度实值 LEAPS 流动性有限，请使用限价单"
+            f"基准：{self._usd(baseline)}（2026-05-24）　BS估算价格仅供参考，操作以市场报价为准，请使用限价单"
         ))
 
         return {
