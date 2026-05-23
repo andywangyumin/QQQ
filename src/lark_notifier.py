@@ -146,9 +146,17 @@ class LarkNotifier:
             if s.get("type") in ("BEAR_ADD", "BEAR_ADD_COOLDOWN")
         ]
 
-        # ── 标题颜色 ──────────────────────────────────────────────────────
+        # ── 标题颜色（有操作信号或可自动推断出操作信号时显示橙色）────────
         action_types = {"HARVEST", "ROLL_OUT", "BEAR_ADD"}
         has_action   = any(s.get("type") in action_types for s in signals)
+        # signals=[] 时从持仓数据补充判断（与位置块内的自动推断逻辑保持一致）
+        if not has_action:
+            for p in positions:
+                g2 = greeks.get(p["id"], {})
+                d2, t2 = g2.get("delta", 0.0), g2.get("dte", 0)
+                if (t2 < 300 and d2 < 0.90) or d2 >= 0.90 or d2 < 0.50:
+                    has_action = True
+                    break
         header_color = "orange" if has_action else "blue"
 
         elements: list = []
@@ -156,7 +164,7 @@ class LarkNotifier:
         # ── QQQ 行情行 ────────────────────────────────────────────────────
         qqq_arrow = "📈" if qqq_chg >= 0 else "📉"
         elements.append(self._div(
-            f"**QQQ**　　${qqq_price:.2f}　　{qqq_arrow} **{qqq_chg:+.2%}**"
+            f"**QQQ**　　${qqq_price:.2f}　　{qqq_arrow} 较前日 **{qqq_chg:+.2%}**"
         ))
         elements.append(self._hr())
 
@@ -185,41 +193,55 @@ class LarkNotifier:
         elements.append(self._div("**📋 持仓明细**"))
 
         for pos in positions:
-            pos_id   = pos["id"]
-            signal   = signal_map.get(pos_id, {"type": "HOLD", "reason": "持仓观望"})
-            sig_type = signal.get("type", "HOLD")
+            pos_id = pos["id"]
 
             g     = greeks.get(pos_id, {})
             delta = g.get("delta", 0.0)
             price = g.get("price", 0.0)
             dte   = g.get("dte", 0)
-            qty   = pos.get("quantity", 1)
-            val   = price * qty * 100
-            cost  = pos.get("cost_per_share", 0.0) * qty * 100
+
+            # 优先用传入的信号；否则从持仓数据自动推断（供无信号场景如 snapshot.py 使用）
+            if pos_id in signal_map:
+                signal = signal_map[pos_id]
+            elif dte < 300 and delta < 0.90:
+                signal = {"type": "ROLL_OUT", "reason": f"DTE={dte}天 < 300，建议续杯换期"}
+            elif delta >= 0.90:
+                signal = {"type": "HARVEST",  "reason": f"Delta={delta:.3f} ≥ 0.90，建议收割"}
+            elif delta < 0.50:
+                signal = {"type": "BEAR_ADD", "reason": f"Delta={delta:.3f} < 0.50，可考虑加仓"}
+            else:
+                signal = {"type": "HOLD",     "reason": "无操作信号，继续持仓观望"}
+
+            sig_type = signal.get("type", "HOLD")
+
+            qty  = pos.get("quantity", 1)
+            val  = price * qty * 100
+            cost = pos.get("cost_per_share", 0.0) * qty * 100
             pos_pnl     = val - cost
             pos_pnl_pct = pos_pnl / cost if cost else 0.0
-
-            dte_warn   = "　⚠️ 需续杯"   if dte < 300 else ""
-            delta_warn = ("　🟢 触发收割" if delta >= 0.90 else
-                         "　🔴 触发加仓" if delta < 0.50  else "")
 
             bg       = SIGNAL_BG.get(sig_type, "grey")
             pc       = "green" if pos_pnl >= 0 else "red"
             ps       = "+" if pos_pnl >= 0 else ""
             pnl_icon = "🟢" if pos_pnl >= 0 else "🔴"
 
-            # 日期简化：YYYY-MM-DD → MM-DD
             expiry_str   = str(pos["expiry"])
             expiry_short = expiry_str[5:] if len(expiry_str) >= 7 else expiry_str
 
+            # 左列固定4行，所有持仓格式完全一致：ID / 行权价 / 到期+DTE / 状态标签
+            dte_tag = "⚠️ 需续杯（DTE < 300天）" if dte < 300 else "—"
             left = (
                 f"**{pos_id}**\n"
                 f"行权价　${pos['strike']:.0f}\n"
-                f"到期　{expiry_short}　DTE **{dte}天**{dte_warn}"
+                f"到期　{expiry_short}　DTE **{dte}天**\n"
+                f"{dte_tag}"
             )
+
+            # 右列固定4行，与左列行数对齐：Delta / 估价 / 市值 / P&L
             right = (
-                f"Delta　**{delta:.3f}**{delta_warn}\n"
-                f"估价　${price:.2f}　市值　{self._usd(val)}\n"
+                f"Delta　**{delta:.3f}**\n"
+                f"估价　${price:.2f}\n"
+                f"市值　{self._usd(val)}\n"
                 f"<font color='{pc}'>"
                 f"{pnl_icon} P&L　{ps}{self._usd(abs(pos_pnl))}（{pos_pnl_pct:+.1%}）"
                 f"</font>"
@@ -249,11 +271,12 @@ class LarkNotifier:
 
         elements.append(self._hr())
 
-        # ── 底部备注 ──────────────────────────────────────────────────────
+        # ── 底部备注（拆为两行，避免截断）────────────────────────────────
         elements.append(self._note(
-            f"基准：{self._usd(baseline)}（2026-05-24 设定）　"
-            "价格为 Black-Scholes 估算，实际操作以市场报价为准。"
-            "深度实值 LEAPS 流动性有限，请用限价单耐心等待成交"
+            f"基准：{self._usd(baseline)}（2026-05-24 设定）　价格为 Black-Scholes 估算，仅供参考"
+        ))
+        elements.append(self._note(
+            "实际操作以市场报价为准，深度实值 LEAPS 流动性有限，请使用限价单"
         ))
 
         return {
