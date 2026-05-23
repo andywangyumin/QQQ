@@ -59,7 +59,7 @@ def load_config() -> tuple[dict, dict]:
     return settings, pos_raw
 
 
-def build_positions(pos_raw: dict) -> tuple[list[Position], float]:
+def build_positions(pos_raw: dict) -> tuple[list[Position], float, float]:
     positions = []
     for p in pos_raw["positions"]:
         expiry = date.fromisoformat(p["expiry"])
@@ -73,8 +73,9 @@ def build_positions(pos_raw: dict) -> tuple[list[Position], float]:
             entry_date=entry,
             note=p.get("note", ""),
         ))
-    cash = float(pos_raw["portfolio"]["cash"])
-    return positions, cash
+    cash     = float(pos_raw["portfolio"]["cash"])
+    baseline = float(pos_raw["portfolio"].get("baseline", cash))
+    return positions, cash, baseline
 
 
 # ── 核心流程 ───────────────────────────────────────────────
@@ -85,9 +86,9 @@ def run(dry_run: bool = False, force: bool = False) -> None:
     log.info("=" * 60)
 
     # 1. 加载配置
-    settings, pos_raw = load_config()
-    positions, cash   = build_positions(pos_raw)
-    log.info(f"已加载 {len(positions)} 个持仓，现金 ${cash:,.0f}")
+    settings, pos_raw       = load_config()
+    positions, cash, baseline = build_positions(pos_raw)
+    log.info(f"已加载 {len(positions)} 个持仓，现金 ${cash:,.0f}，基准 ${baseline:,.0f}")
 
     # 2. 初始化数据库
     ss.init_db()
@@ -160,7 +161,7 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         return
 
     # 8. 构建并发送飞书卡片
-    card = ln.build_card(pf, results, quote["date"])
+    card = ln.build_card(pf, results, quote["date"], baseline=baseline)
 
     if dry_run:
         log.info("[DRY RUN] 卡片内容（不实际发送）：")
