@@ -88,7 +88,8 @@ def main():
     for url in webhooks:
         notifier = LarkNotifier(url)
         card     = notifier._build_portfolio_card(
-            account, positions_list, [], S, cash_pct, position_greeks
+            account, positions_list, [], S, cash_pct, position_greeks,
+            report_mode="snapshot",
         )
         ok = notifier.send(card)
         log.info(f"推送{'成功' if ok else '失败'}　{url[-20:]}")

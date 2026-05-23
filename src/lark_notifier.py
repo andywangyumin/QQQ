@@ -107,10 +107,13 @@ class LarkNotifier:
         qqq_price: float,
         cash_pct: float,
         position_greeks: Dict[str, Dict] = None,
+        report_mode: str = "daily",
     ) -> Dict:
         """
-        构建资产盘点飞书卡片。
+        构建飞书卡片。
 
+        report_mode: "daily"（每日日报，主标题 QQQ LEAPS 日报）
+                     "snapshot"（手动盘点，主标题 资产盘点）
         account:        {cash, base_nav, qqq_change_pct?, qqq_date?}
         positions:      [{id, strike, expiry, quantity, cost_per_share}]
         signals:        [{type, position_id?, reason, action_sell?, action_buy?,
@@ -146,7 +149,7 @@ class LarkNotifier:
             if s.get("type") in ("BEAR_ADD", "BEAR_ADD_COOLDOWN")
         ]
 
-        # ── 标题颜色（有操作信号或可自动推断出操作信号时显示橙色）────────
+        # ── 标题 & 颜色 ───────────────────────────────────────────────────
         action_types = {"HARVEST", "ROLL_OUT", "BEAR_ADD"}
         has_action   = any(s.get("type") in action_types for s in signals)
         # signals=[] 时从持仓数据补充判断（与位置块内的自动推断逻辑保持一致）
@@ -157,7 +160,17 @@ class LarkNotifier:
                 if (t2 < 300 and d2 < 0.90) or d2 >= 0.90 or d2 < 0.50:
                     has_action = True
                     break
-        header_color = "orange" if has_action else "blue"
+
+        if report_mode == "snapshot":
+            title        = f"📊 资产盘点　[{qqq_date}]"
+            header_color = "orange" if has_action else "blue"
+        else:  # daily report
+            if has_action:
+                title        = f"🔔 QQQ LEAPS 日报 | ⚠️ 今日有操作 [{qqq_date}]"
+                header_color = "orange"
+            else:
+                title        = f"✅ QQQ LEAPS 日报 | 今日无操作 [{qqq_date}]"
+                header_color = "green"
 
         elements: list = []
 
@@ -168,25 +181,32 @@ class LarkNotifier:
         ))
         elements.append(self._hr())
 
-        # ── 资产概览（两列 grey 背景块）───────────────────────────────────
+        # ── 资产概览（三列 grey：总资产 40% | 期权 30% | 现金 30%）─────────
         pnl_color = "green" if pnl >= 0 else "red"
         pnl_arrow = "🟢" if pnl >= 0 else "🔴"
         pnl_sign  = "+" if pnl >= 0 else ""
-        cash_warn = "　⚠️ 低于安全线" if cash_pct < 0.10 else ""
+        opt_pct   = opt_val / total if total else 0.0
+        cash_warn = "  ⚠️ 低于安全线" if cash_pct < 0.10 else ""
 
-        col_left = self._column("50%",
+        col_total = self._column("40%",
             f"**总资产**\n"
             f"**${total:,.0f}**\n"
             f"<font color='{pnl_color}'>"
-            f"{pnl_arrow} {pnl_sign}${abs(pnl):,.0f}（{pnl_pct:+.2%}）"
-            f"</font>"
+            f"{pnl_arrow} {pnl_sign}${abs(pnl):,.0f} ({pnl_pct:+.2%})"
+            f"</font>\n"
+            f"vs 基准 {self._usd(baseline)}"
         )
-        col_right = self._column("50%",
-            f"**期权市值**　{self._usd(opt_val)}\n"
-            f"**现金**　{self._usd(cash)}\n"
+        col_opt = self._column("30%",
+            f"**期权市值**\n"
+            f"**{self._usd(opt_val)}**\n"
+            f"占比 {opt_pct:.1%}"
+        )
+        col_cash = self._column("30%",
+            f"**现金**\n"
+            f"**{self._usd(cash)}**\n"
             f"占比 {cash_pct:.1%}{cash_warn}"
         )
-        elements.append(self._column_set([col_left, col_right], bg="grey"))
+        elements.append(self._column_set([col_total, col_opt, col_cash], bg="grey"))
         elements.append(self._hr())
 
         # ── 持仓明细 ──────────────────────────────────────────────────────
@@ -289,7 +309,7 @@ class LarkNotifier:
             "card": {
                 "config": {"wide_screen_mode": True},
                 "header": {
-                    "title":    self._text(f"📊 资产盘点　[{qqq_date}]"),
+                    "title":    self._text(title),
                     "template": header_color,
                 },
                 "elements": elements,
@@ -304,47 +324,88 @@ class LarkNotifier:
         if sig_type == "ROLL_OUT":
             s, b = signal.get("action_sell"), signal.get("action_buy")
             if s and b:
+                cost_net = abs(signal.get("estimated_net") or 0)
                 blocks.append(self._div(
-                    f"**【操作指令】**\n"
-                    f"① 卖出限价单　K=${s['strike']:.0f} 到期 {s['expiry']} ×{s['quantity']}张"
-                    f"　参考价 ≈ ${s['est_bid']:.2f}/股\n"
-                    f"② 买入限价单　K=${b['strike']:.0f} 到期 {b['expiry']}"
-                    f"（DTE≈{b['target_dte']}天）×{b['quantity']}张"
-                    f"　参考价 ≈ ${b['est_ask']:.2f}/股\n"
-                    f"③ 预估续杯成本　≈ {self._usd(abs(signal.get('estimated_net') or 0))}（现金支出）\n"
-                    f"④ 完成后告知 AI 新合约详情，自动更新配置"
+                    f"**【操作步骤 — 无限续杯（ROLL OUT）】**\n"
+                    f"合约快到期了，需要把它【滚动】到 2 年后的新合约，保持持仓不中断。\n"
+                    f"\n"
+                    f"**第一步：卖出旧合约（回收资金）**\n"
+                    f"　在 IBKR 下**限价卖单**：\n"
+                    f"　QQQ Call　行权价 ${s['strike']:.0f}　到期 {s['expiry']}　×{s['quantity']} 张\n"
+                    f"　参考挂价 ≈ **${s['est_bid']:.2f}/股**（每张合约约 {self._usd(s['est_bid']*100)}）\n"
+                    f"\n"
+                    f"**第二步：买入新合约（延期 2 年）**\n"
+                    f"　在 IBKR 下**限价买单**：\n"
+                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
+                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**（每张合约约 {self._usd(b['est_ask']*100)}）\n"
+                    f"\n"
+                    f"**第三步：确认资金缺口**\n"
+                    f"　新合约比旧合约贵，差价约 **{self._usd(cost_net)}**（从现金账户扣除）\n"
+                    f"　操作前请确认账户现金 > {self._usd(cost_net)}\n"
+                    f"\n"
+                    f"**第四步：完成后告知 AI**\n"
+                    f"　示例：『完成了 ${s['strike']:.0f}C 续杯，新合约到期 {b['expiry']}，买入价 $XXX』\n"
+                    f"　AI 自动更新持仓记录\n"
+                    f"\n"
+                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
                 ))
 
         elif sig_type == "HARVEST":
             s, b = signal.get("action_sell"), signal.get("action_buy")
             if s and b:
-                net     = signal.get("estimated_net") or 0
-                net_str = (f"预估净收入 ≈ {self._usd(net)}"
-                           if net > 0 else f"预估净支出 ≈ {self._usd(abs(net))}")
+                net = signal.get("estimated_net") or 0
+                if net > 0:
+                    net_desc = f"操作后现金增加约 **{self._usd(net)}**（净收入归入现金仓位）"
+                else:
+                    net_desc = f"操作后现金减少约 **{self._usd(abs(net))}**（差价从现金扣除）"
                 blocks.append(self._div(
-                    f"**【操作指令】**\n"
-                    f"① 卖出限价单　K=${s['strike']:.0f} 到期 {s['expiry']} ×{s['quantity']}张"
-                    f"　参考价 ≈ ${s['est_bid']:.2f}/股\n"
-                    f"② 买入限价单　K=${b['strike']:.0f} 到期 {b['expiry']}"
-                    f"（DTE≈{b['target_dte']}天）×{b['quantity']}张"
-                    f"　参考价 ≈ ${b['est_ask']:.2f}/股\n"
-                    f"③ {net_str}\n"
-                    f"④ 完成后告知 AI 新合约详情，自动更新配置"
+                    f"**【操作步骤 — 收割利润（HARVEST）】**\n"
+                    f"合约 Delta ≥ 0.90，价格已很贵了。卖掉换成更高行权价的新合约，锁定部分利润。\n"
+                    f"\n"
+                    f"**第一步：卖出旧合约（套现）**\n"
+                    f"　在 IBKR 下**限价卖单**：\n"
+                    f"　QQQ Call　行权价 ${s['strike']:.0f}　到期 {s['expiry']}　×{s['quantity']} 张\n"
+                    f"　参考挂价 ≈ **${s['est_bid']:.2f}/股**\n"
+                    f"\n"
+                    f"**第二步：买入新合约（换更高行权价，延期 2 年）**\n"
+                    f"　在 IBKR 下**限价买单**：\n"
+                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
+                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**\n"
+                    f"\n"
+                    f"**第三步：收益情况**\n"
+                    f"　{net_desc}\n"
+                    f"\n"
+                    f"**第四步：完成后告知 AI**\n"
+                    f"　示例：『完成了收割，新合约行权价 ${b['strike']:.0f}，到期 {b['expiry']}，买入价 $XXX』\n"
+                    f"　AI 自动更新持仓记录\n"
+                    f"\n"
+                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
                 ))
 
         elif sig_type == "BEAR_ADD":
             b = signal.get("action_buy")
             if b:
+                mode_cn = "重炮模式（现金充足，加倍买入）" if "重炮" in b.get("mode", "") else "标准模式"
                 blocks.append(self._div(
-                    f"**【操作指令 — {b.get('mode', '标准模式')}】**\n"
-                    f"买入限价单　K=${b['strike']:.0f} 到期 {b['expiry']}"
-                    f"（DTE≈{b['target_dte']}天）×{b['quantity']}张\n"
-                    f"参考价 ≈ ${b['est_ask']:.2f}/股　预估成本 ≈ {self._usd(b.get('est_cost', 0))}\n"
-                    f"完成后告知 AI，进入 30 天冷却期"
+                    f"**【操作步骤 — 逆势加仓（BEAR ADD · {mode_cn}）】**\n"
+                    f"QQQ 下跌 Delta < 0.50，趁低价增持新合约，摊低成本。\n"
+                    f"\n"
+                    f"**在 IBKR 下限价买单**：\n"
+                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
+                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**（预计总成本约 {self._usd(b.get('est_cost', 0))}）\n"
+                    f"\n"
+                    f"**完成后告知 AI**：实际买入价 + 到期日，系统自动进入 **30 天冷却期**\n"
+                    f"（冷却期内即使 Delta 仍低，也不会再触发加仓信号）\n"
+                    f"\n"
+                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
                 ))
 
         elif sig_type == "ROLL_OUT_BLOCKED":
-            blocks.append(self._div(f"⚠️ {signal.get('reason', '')}"))
+            blocks.append(self._div(
+                f"⚠️ **需续杯但现金不足**\n"
+                f"当前现金低于安全线（< 10% 总资产），暂时无法执行续杯操作。\n"
+                f"建议等待现金回升后再操作，或联系 AI 评估处理方案。"
+            ))
 
         return blocks
 
@@ -428,7 +489,8 @@ def build_card(pf, results, quote_date, baseline: float = 100_000.0) -> dict:
 
     notifier = LarkNotifier("_dummy_")
     return notifier._build_portfolio_card(
-        account, positions, signals, pf.qqq_close, pf.cash_pct, position_greeks
+        account, positions, signals, pf.qqq_close, pf.cash_pct, position_greeks,
+        report_mode="daily",
     )
 
 
