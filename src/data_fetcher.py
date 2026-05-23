@@ -1,0 +1,140 @@
+"""
+数据拉取模块
+- QQQ 收盘价、日涨跌幅、历史波动率（yfinance）
+- 期权链隐含波动率 → 用于 Black-Scholes 计算 Delta（yfinance）
+"""
+import logging
+import warnings
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+warnings.filterwarnings("ignore")
+log = logging.getLogger(__name__)
+
+
+# ── QQQ 行情 ──────────────────────────────────────────────
+
+def fetch_qqq_quote() -> dict:
+    """
+    返回 QQQ 最近一个交易日的收盘数据：
+      close, prev_close, change_pct, hv20（20日历史波动率）
+    """
+    raw = yf.download("QQQ", period="30d", auto_adjust=True, progress=False)
+    if raw.empty:
+        raise RuntimeError("yfinance 下载 QQQ 数据失败，请检查网络")
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.droplevel(1)
+
+    close = raw["Close"].dropna()
+    log_ret = np.log(close / close.shift(1)).dropna()
+    hv20 = float(log_ret.tail(20).std() * np.sqrt(252))
+    hv20 = float(np.clip(hv20, 0.10, 0.80))
+
+    latest_close = float(close.iloc[-1])
+    prev_close   = float(close.iloc[-2]) if len(close) >= 2 else latest_close
+    change_pct   = (latest_close - prev_close) / prev_close
+
+    last_date = close.index[-1]
+    if isinstance(last_date, pd.Timestamp):
+        last_date = last_date.date()
+
+    return {
+        "date":       last_date,
+        "close":      latest_close,
+        "prev_close": prev_close,
+        "change_pct": change_pct,
+        "hv20":       hv20,
+    }
+
+
+# ── 期权 IV ────────────────────────────────────────────────
+
+def _find_closest_expiry(available, target: date) -> Optional[str]:
+    """从 yfinance 提供的到期日列表中找最近的一个"""
+    if not available:
+        return None
+    closest = min(
+        available,
+        key=lambda d: abs((datetime.strptime(d, "%Y-%m-%d").date() - target).days)
+    )
+    gap = abs((datetime.strptime(closest, "%Y-%m-%d").date() - target).days)
+    if gap > 60:
+        log.warning(f"最近可用到期日 {closest} 距目标 {target} 相差 {gap} 天，IV 参考价值有限")
+    return closest
+
+
+def fetch_option_iv(strike: float, expiry_str: str,
+                    fallback_hv: float = 0.20) -> float:
+    """
+    从 yfinance 期权链获取指定行权价附近的隐含波动率。
+    若找不到，回退到历史波动率 fallback_hv。
+    """
+    target = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+    try:
+        ticker = yf.Ticker("QQQ")
+        available = list(ticker.options)      # ['2026-12-18', '2027-01-15', ...]
+        if not available:
+            log.warning("yfinance 未返回 QQQ 期权到期日列表，使用 HV 回退")
+            return fallback_hv
+
+        closest_exp = _find_closest_expiry(available, target)
+        chain = ticker.option_chain(closest_exp)
+        calls = chain.calls[["strike", "impliedVolatility"]].dropna()
+
+        if calls.empty:
+            return fallback_hv
+
+        # 找到最近的行权价
+        idx = (calls["strike"] - strike).abs().idxmin()
+        iv = float(calls.loc[idx, "impliedVolatility"])
+
+        # yfinance 有时返回 0 或极端值
+        if iv <= 0.01 or iv > 2.0:
+            log.warning(f"IV={iv:.3f} 异常，回退到 HV")
+            return fallback_hv
+
+        return float(np.clip(iv, 0.10, 0.80))
+
+    except Exception as e:
+        log.warning(f"获取期权 IV 失败（{e}），使用 HV 回退")
+        return fallback_hv
+
+
+def fetch_option_mid(strike: float, expiry_str: str) -> Optional[float]:
+    """
+    获取指定合约的市场中间价（(bid+ask)/2），用于估算操作成本。
+    返回 None 表示获取失败。
+    """
+    target = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+    try:
+        ticker = yf.Ticker("QQQ")
+        available = list(ticker.options)
+        closest_exp = _find_closest_expiry(available, target)
+        chain = ticker.option_chain(closest_exp)
+        calls = chain.calls[["strike", "bid", "ask"]].dropna()
+
+        if calls.empty:
+            return None
+
+        idx = (calls["strike"] - strike).abs().idxmin()
+        bid = float(calls.loc[idx, "bid"])
+        ask = float(calls.loc[idx, "ask"])
+        if bid <= 0 or ask <= 0:
+            return None
+        return (bid + ask) / 2.0
+
+    except Exception as e:
+        log.warning(f"获取期权市价失败（{e}）")
+        return None
+
+
+def is_market_open_today(quote_date: date) -> bool:
+    """判断 quote_date 是否是有效交易日（yfinance 返回了数据则视为交易日）"""
+    today = date.today()
+    # 如果 yfinance 返回的最新数据日期是昨天或今天，视为正常
+    return (today - quote_date).days <= 3

@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+logs/*.log
+logs/cron.log
+# state.db 由 GitHub Actions cache 管理，不提交
+logs/state.db

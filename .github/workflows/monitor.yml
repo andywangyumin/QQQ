@@ -1,0 +1,35 @@
+name: QQQ LEAPS Monitor
+
+on:
+  schedule:
+    - cron: '0 10 * * 1-5'   # UTC 10:00 = 北京时间 18:00，周一至周五
+  workflow_dispatch:           # 允许手动触发（测试用）
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore state DB (冷却期 & 去重记录)
+        uses: actions/cache@v4
+        with:
+          path: logs/state.db
+          key: state-db-${{ github.run_id }}
+          restore-keys: |
+            state-db-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        run: python src/main.py
+        env:
+          LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}

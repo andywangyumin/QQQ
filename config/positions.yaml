@@ -1,0 +1,34 @@
+# QQQ LEAPS Call 持仓配置
+# 每次执行 HARVEST / ROLL OUT / BEAR ADD 后手动更新本文件
+# cost_per_share: 买入时期权报价（非总成本），单张合约 = cost_per_share × 100
+
+positions:
+  - id: "QQQ_261218_620C"
+    strike: 620.0
+    expiry: "2026-12-18"
+    quantity: 1
+    cost_per_share: 63.00
+    entry_date: "2026-05-23"
+    note: "初始建仓"
+
+  - id: "QQQ_261218_630C"
+    strike: 630.0
+    expiry: "2026-12-18"
+    quantity: 1
+    cost_per_share: 64.29
+    entry_date: "2026-05-23"
+    note: "初始建仓"
+
+  - id: "QQQ_270331_705C"
+    strike: 705.0
+    expiry: "2027-03-31"
+    quantity: 1
+    cost_per_share: 76.23
+    entry_date: "2026-05-23"
+    note: "初始建仓"
+
+# 现金仓位（美元）：每次操作后手动更新
+# 用于计算 cash_pct 和判断 BEAR ADD 模式
+portfolio:
+  cash: 40000.0
+  note: "初始现金储备，请根据实际情况修改"

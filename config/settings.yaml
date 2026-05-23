@@ -1,0 +1,21 @@
+# 策略参数（与 PRD 保持一致，通常无需修改）
+strategy:
+  target_dte: 700          # 建仓/续杯目标剩余天数
+  delta_entry: 0.80        # 建仓目标 Delta
+  delta_harvest: 0.90      # 收割触发 Delta（≥ 此值）
+  delta_harvest_new: 0.70  # 收割后新合约目标 Delta
+  dte_rollout: 300         # 续杯触发 DTE（< 此值）
+  delta_bear: 0.50         # 熊市加仓触发 Delta（< 此值）
+  min_cash_pct: 0.10       # 现金最低比例（低于此值禁止操作）
+  heavy_cash_pct: 0.40     # 重炮模式现金阈值
+  heavy_alloc: 0.10        # 重炮模式动用比例
+  standard_alloc: 0.05     # 标准模式动用比例
+  cooldown_days: 30        # 加仓冷却期（天）
+  risk_free_rate: 0.04     # 无风险利率（Black-Scholes 用）
+
+# 通知设置
+notify:
+  # 无信号时是否发送日报（建议开启，确认系统正常运行）
+  send_daily_report: true
+  # 信号推送时 @ 指定用户（填写飞书 open_id，留空则不 @）
+  mention_user_id: ""
