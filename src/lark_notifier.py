@@ -30,14 +30,14 @@ SIGNAL_CN = {
     "BEAR_ADD_COOLDOWN": "加仓冷却中",
     "HOLD":              "持仓观望 HOLD",
 }
-# column_set background_style per signal type
+# 所有持仓统一使用无色背景，通过 hr 分隔；信号由卡片内文字图标区分
 SIGNAL_BG = {
-    "HARVEST":           "green",
-    "ROLL_OUT":          "yellow",
-    "ROLL_OUT_BLOCKED":  "red",
-    "BEAR_ADD":          "red",
-    "BEAR_ADD_COOLDOWN": "grey",
-    "HOLD":              "grey",
+    "HARVEST":           "default",
+    "ROLL_OUT":          "default",
+    "ROLL_OUT_BLOCKED":  "default",
+    "BEAR_ADD":          "default",
+    "BEAR_ADD_COOLDOWN": "default",
+    "HOLD":              "default",
 }
 
 
@@ -220,43 +220,50 @@ class LarkNotifier:
             pos_pnl     = val - cost
             pos_pnl_pct = pos_pnl / cost if cost else 0.0
 
-            bg       = SIGNAL_BG.get(sig_type, "grey")
             pc       = "green" if pos_pnl >= 0 else "red"
-            ps       = "+" if pos_pnl >= 0 else ""
+            ps       = "+" if pos_pnl >= 0 else "-"
             pnl_icon = "🟢" if pos_pnl >= 0 else "🔴"
 
             expiry_str   = str(pos["expiry"])
             expiry_short = expiry_str[5:] if len(expiry_str) >= 7 else expiry_str
 
-            # 左列固定4行，所有持仓格式完全一致：ID / 行权价 / 到期+DTE / 状态标签
-            dte_tag = "⚠️ 需续杯（DTE < 300天）" if dte < 300 else "—"
+            # 左列第4行：直接嵌入信号标签，不再单独输出一行 note，避免重复
+            if sig_type == "ROLL_OUT":
+                sig_tag = f"⚠️ DTE {dte}天，需续杯换期"
+            elif sig_type == "ROLL_OUT_BLOCKED":
+                sig_tag = f"⚠️ DTE {dte}天，需续杯但现金不足"
+            elif sig_type == "HARVEST":
+                sig_tag = f"🟢 Delta {delta:.3f}，触发收割信号"
+            elif sig_type in ("BEAR_ADD", "BEAR_ADD_COOLDOWN"):
+                sig_tag = f"🔴 Delta {delta:.3f}，触发加仓信号"
+            else:
+                sig_tag = "✅ HOLD：无操作"
+
+            # 左列固定4行：ID / 行权价 / 到期+DTE / 信号标签
             left = (
                 f"**{pos_id}**\n"
                 f"行权价　${pos['strike']:.0f}\n"
                 f"到期　{expiry_short}　DTE **{dte}天**\n"
-                f"{dte_tag}"
+                f"{sig_tag}"
             )
 
-            # 右列固定4行，与左列行数对齐：Delta / 估价 / 市值 / P&L
+            # 右列固定4行：Delta / 估价 / 市值 / P&L（去掉"P&L"标签，用ASCII括号）
             right = (
                 f"Delta　**{delta:.3f}**\n"
                 f"估价　${price:.2f}\n"
                 f"市值　{self._usd(val)}\n"
                 f"<font color='{pc}'>"
-                f"{pnl_icon} P&L　{ps}{self._usd(abs(pos_pnl))}（{pos_pnl_pct:+.1%}）"
+                f"{pnl_icon} {ps}{self._usd(abs(pos_pnl))} ({pos_pnl_pct:+.1%})"
                 f"</font>"
             )
 
             elements.append(self._column_set(
                 [self._column("50%", left), self._column("50%", right)],
-                bg=bg,
+                bg="default",
             ))
-
-            sig_emoji = SIGNAL_EMOJI.get(sig_type, "⬜")
-            sig_cn    = SIGNAL_CN.get(sig_type, sig_type)
-            elements.append(self._note(
-                f"{sig_emoji} {sig_cn}　{signal.get('reason', '')}"
-            ))
+            # 持仓之间用 hr 分隔（代替深色背景块）
+            elements.append(self._hr())
+            # 有操作指令时输出（如 ROLL_OUT/HARVEST/BEAR_ADD 的买卖单详情）
             elements += self._operation_block(signal)
 
         # ── BEAR_ADD（组合级，不依附单一持仓）───────────────────────────
@@ -268,8 +275,7 @@ class LarkNotifier:
                 f"{sig_emoji} {sig_cn}　{sig.get('reason', '')}"
             ))
             elements += self._operation_block(sig)
-
-        elements.append(self._hr())
+            elements.append(self._hr())
 
         # ── 底部备注（拆为两行，避免截断）────────────────────────────────
         elements.append(self._note(
