@@ -20,6 +20,7 @@ class Position:
     cost_per_share: float
     entry_date: date
     note: str = ""
+    exempt_rollout: bool = False  # True = 豁免续杯，仅 HARVEST 触发
     # 由 signal engine 填充
     greeks: Optional[OptionGreeks] = None
 
@@ -177,6 +178,8 @@ def evaluate(pf: PortfolioState, settings: dict,
     for pos in pf.positions:
         if pos.greeks is None:
             continue
+        if pos.exempt_rollout:
+            continue  # 豁免续杯：跳过 ROLL_OUT，等待 HARVEST 信号
         dte = pos.dte
         delta = pos.greeks.delta
 
@@ -261,11 +264,16 @@ def evaluate(pf: PortfolioState, settings: dict,
     triggered_ids = {r.position_id for r in results}
     for pos in pf.positions:
         if pos.id not in triggered_ids:
+            if pos.exempt_rollout and pos.dte < settings["dte_rollout"]:
+                reason = (f"DTE={pos.dte}天 < {settings['dte_rollout']}，"
+                          f"已豁免续杯，等待 Delta ≥ {settings['delta_harvest']} 触发 HARVEST")
+            else:
+                reason = "无信号，继续持仓"
             results.append(SignalResult(
                 signal_type="HOLD",
                 position_id=pos.id,
                 position=pos,
-                reason="无信号，继续持仓",
+                reason=reason,
             ))
 
     return results

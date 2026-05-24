@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import data_fetcher as df
 from bs_model import compute_greeks
 from lark_notifier import LarkNotifier
+import state_store as ss
 
 load_dotenv(ROOT / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
@@ -56,6 +57,7 @@ def main():
             "expiry":         p["expiry"],
             "quantity":       p["quantity"],
             "cost_per_share": p["cost_per_share"],
+            "exempt_rollout": bool(p.get("exempt_rollout", False)),
         })
         position_greeks[p["id"]] = {
             "delta": g.delta,
@@ -78,6 +80,12 @@ def main():
         "qqq_date":       str(quote["date"]),
     }
 
+    # 读取北极星指标数据
+    ss.init_db()
+    harvest_credits      = ss.get_cumulative_harvest_credits()
+    initial_option_cost  = float(pos_raw["portfolio"].get("initial_option_cost", 0.0))
+    total_option_invested = ss.get_total_option_invested(initial_option_cost)
+
     # 构建并推送
     webhooks = [u.strip() for u in
                 os.environ.get("LARK_WEBHOOK_URLS", "").split(",") if u.strip()]
@@ -87,9 +95,10 @@ def main():
 
     for url in webhooks:
         notifier = LarkNotifier(url)
-        card     = notifier._build_portfolio_card(
-            account, positions_list, [], S, cash_pct, position_greeks,
-            report_mode="snapshot",
+        card     = notifier._build_snapshot_card(
+            account, positions_list, S, cash_pct, position_greeks,
+            harvest_credits=harvest_credits,
+            total_invested=total_option_invested,
         )
         ok = notifier.send(card)
         log.info(f"推送{'成功' if ok else '失败'}　{url[-20:]}")

@@ -26,6 +26,7 @@ import state_store  as ss
 import lark_notifier as ln
 from bs_model import compute_greeks
 from signal_engine import Position, PortfolioState, evaluate
+from history_store import upsert_day
 
 load_dotenv(ROOT / ".env")
 
@@ -72,6 +73,7 @@ def build_positions(pos_raw: dict) -> tuple[list[Position], float, float]:
             cost_per_share=float(p["cost_per_share"]),
             entry_date=entry,
             note=p.get("note", ""),
+            exempt_rollout=bool(p.get("exempt_rollout", False)),
         ))
     cash     = float(pos_raw["portfolio"]["cash"])
     baseline = float(pos_raw["portfolio"].get("baseline", cash))
@@ -102,6 +104,9 @@ def run(dry_run: bool = False, force: bool = False) -> None:
     if not df.is_market_open_today(quote["date"]):
         log.warning(f"数据日期 {quote['date']} 超过3天前，可能今日为假期，跳过推送")
         return
+
+    # 写入历史数据库（幂等，每日一行）
+    upsert_day(quote["date"], quote["close"], quote["hv20"])
 
     # 4. 为每个持仓计算 Greeks
     log.info("计算各持仓 Greeks...")
@@ -161,7 +166,14 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         return
 
     # 8. 构建并发送飞书卡片
-    card = ln.build_card(pf, results, quote["date"], baseline=baseline)
+    harvest_credits      = ss.get_cumulative_harvest_credits()
+    initial_option_cost  = float(pos_raw["portfolio"].get("initial_option_cost", 0.0))
+    total_option_invested = ss.get_total_option_invested(initial_option_cost)
+    card = ln.build_card(
+        pf, results, quote["date"], baseline=baseline,
+        harvest_credits=harvest_credits,
+        total_option_invested=total_option_invested,
+    )
 
     if dry_run:
         log.info("[DRY RUN] 卡片内容（不实际发送）：")
@@ -185,6 +197,8 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         for r in results:
             if r.signal_type in ("HARVEST", "ROLL_OUT", "BEAR_ADD"):
                 ss.mark_sent(r.signal_type, r.position_id)
+                if r.estimated_net is not None:
+                    ss.log_transaction(r.signal_type, r.position_id, r.estimated_net)
             if r.signal_type == "BEAR_ADD":
                 ss.record_bear_add(date.today(), r.reason)
 

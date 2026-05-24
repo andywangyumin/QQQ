@@ -79,6 +79,16 @@ class LarkNotifier:
         }
 
     @staticmethod
+    def _wcol(weight: int, content: str) -> dict:
+        """等比权重列：相同 weight 值则等宽，Feishu 官方推荐方式"""
+        return {
+            "tag":      "column",
+            "width":    "weighted",
+            "weight":   weight,
+            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": content}}],
+        }
+
+    @staticmethod
     def _column_set(columns: list, bg: str = "default") -> dict:
         return {
             "tag":              "column_set",
@@ -97,6 +107,26 @@ class LarkNotifier:
     def _usd2(v: float) -> str:
         return f"${v:,.2f}"
 
+    # ── 北极星指标 ────────────────────────────────────────────────────────
+
+    def _cost_recovery_line(self, harvest_credits: float, total_invested: float) -> dict:
+        """零成本持仓达成率进度行"""
+        if total_invested <= 0:
+            return self._div("💰 零成本进度　— 暂无数据（initial_option_cost 未配置）")
+        pct    = min(1.0, harvest_credits / total_invested)
+        filled = int(pct * 10)
+        bar    = "█" * filled + "░" * (10 - filled)
+        remaining = max(0.0, total_invested - harvest_credits)
+        if pct >= 1.0:
+            text = (f"<font color='green'>🎉 零成本持仓已达成！"
+                    f"累计收割 ${harvest_credits:,.0f}</font>")
+        else:
+            text = (f"💰 零成本进度　{bar}　{pct:.1%}"
+                    f"　· 已收割 ${harvest_credits:,.0f}"
+                    f" / 投入 ${total_invested:,.0f}"
+                    f"　· 还差 ${remaining:,.0f}")
+        return {"tag": "div", "text": {"tag": "lark_md", "content": text}}
+
     # ── 主卡片构建 ────────────────────────────────────────────────────────
 
     def _build_portfolio_card(
@@ -108,6 +138,8 @@ class LarkNotifier:
         cash_pct: float,
         position_greeks: Dict[str, Dict] = None,
         report_mode: str = "daily",
+        harvest_credits: float = 0.0,
+        total_invested: float = 0.0,
     ) -> Dict:
         """
         构建飞书卡片。
@@ -155,9 +187,10 @@ class LarkNotifier:
         # signals=[] 时从持仓数据补充判断（与位置块内的自动推断逻辑保持一致）
         if not has_action:
             for p in positions:
-                g2 = greeks.get(p["id"], {})
+                g2     = greeks.get(p["id"], {})
                 d2, t2 = g2.get("delta", 0.0), g2.get("dte", 0)
-                if (t2 < 300 and d2 < 0.90) or d2 >= 0.90 or d2 < 0.50:
+                exempt = p.get("exempt_rollout", False)
+                if d2 >= 0.90 or d2 < 0.50 or (t2 < 300 and not exempt):
                     has_action = True
                     break
 
@@ -174,119 +207,98 @@ class LarkNotifier:
 
         elements: list = []
 
-        # ── QQQ 行情行 ────────────────────────────────────────────────────
+        # ── QQQ 行情行（左右各占 1/2，weight 等分）────────────────────────
         qqq_arrow = "📈" if qqq_chg >= 0 else "📉"
-        elements.append(self._div(
-            f"**QQQ**　　${qqq_price:.2f}　　{qqq_arrow} 较前日 **{qqq_chg:+.2%}**"
-        ))
+        qqq_chg_color = "green" if qqq_chg >= 0 else "red"
+        elements.append(self._column_set([
+            self._wcol(1, f"**QQQ**　　**${qqq_price:.2f}**"),
+            self._wcol(1, f"{qqq_arrow} 较前日 　<font color='{qqq_chg_color}'>**{qqq_chg:+.2%}**</font>"),
+        ]))
         elements.append(self._hr())
 
-        # ── 资产概览（三列 grey：总资产 40% | 期权 30% | 现金 30%）─────────
+        # ── 资产概览（三列等宽 grey，weight=1 三等分）──────────────────────
         pnl_color = "green" if pnl >= 0 else "red"
-        pnl_arrow = "🟢" if pnl >= 0 else "🔴"
         pnl_sign  = "+" if pnl >= 0 else ""
         opt_pct   = opt_val / total if total else 0.0
         cash_warn = "  ⚠️ 低于安全线" if cash_pct < 0.10 else ""
 
-        col_total = self._column("40%",
+        col_total = self._wcol(1,
             f"**总资产**\n"
             f"**${total:,.0f}**\n"
-            f"<font color='{pnl_color}'>"
-            f"{pnl_arrow} {pnl_sign}${abs(pnl):,.0f} ({pnl_pct:+.2%})"
-            f"</font>\n"
-            f"vs 基准 {self._usd(baseline)}"
+            f"<font color='{pnl_color}'>{pnl_sign}${abs(pnl):,.0f} ({pnl_pct:+.2%})</font>"
         )
-        col_opt = self._column("30%",
+        col_opt = self._wcol(1,
             f"**期权市值**\n"
             f"**{self._usd(opt_val)}**\n"
             f"占比 {opt_pct:.1%}"
         )
-        col_cash = self._column("30%",
+        col_cash = self._wcol(1,
             f"**现金**\n"
             f"**{self._usd(cash)}**\n"
             f"占比 {cash_pct:.1%}{cash_warn}"
         )
         elements.append(self._column_set([col_total, col_opt, col_cash], bg="grey"))
+        elements.append(self._cost_recovery_line(harvest_credits, total_invested))
         elements.append(self._hr())
 
-        # ── 持仓明细 ──────────────────────────────────────────────────────
-        elements.append(self._div("**📋 持仓明细**"))
+        # ── 日报：先输出需要操作的信号（HARVEST / ROLL_OUT），逐合约 ──────
+        # 无操作的 HOLD 合约收集到后面单独汇总
+        hold_positions = []
 
         for pos in positions:
             pos_id = pos["id"]
+            g      = greeks.get(pos_id, {})
+            delta  = g.get("delta", 0.0)
+            price  = g.get("price", 0.0)
+            dte    = g.get("dte", 0)
 
-            g     = greeks.get(pos_id, {})
-            delta = g.get("delta", 0.0)
-            price = g.get("price", 0.0)
-            dte   = g.get("dte", 0)
-
-            # 优先用传入的信号；否则从持仓数据自动推断（供无信号场景如 snapshot.py 使用）
+            exempt = pos.get("exempt_rollout", False)
             if pos_id in signal_map:
                 signal = signal_map[pos_id]
-            elif dte < 300 and delta < 0.90:
-                signal = {"type": "ROLL_OUT", "reason": f"DTE={dte}天 < 300，建议续杯换期"}
             elif delta >= 0.90:
                 signal = {"type": "HARVEST",  "reason": f"Delta={delta:.3f} ≥ 0.90，建议收割"}
             elif delta < 0.50:
                 signal = {"type": "BEAR_ADD", "reason": f"Delta={delta:.3f} < 0.50，可考虑加仓"}
+            elif dte < 300 and not exempt:
+                signal = {"type": "ROLL_OUT", "reason": f"DTE={dte}天 < 300，建议续杯换期"}
+            elif dte < 300 and exempt:
+                signal = {"type": "HOLD",     "reason": f"DTE={dte}天 < 300，已豁免续杯，等待 Delta ≥ 0.90"}
             else:
                 signal = {"type": "HOLD",     "reason": "无操作信号，继续持仓观望"}
 
             sig_type = signal.get("type", "HOLD")
 
-            qty  = pos.get("quantity", 1)
-            val  = price * qty * 100
-            cost = pos.get("cost_per_share", 0.0) * qty * 100
+            qty         = pos.get("quantity", 1)
+            val         = price * qty * 100
+            cost        = pos.get("cost_per_share", 0.0) * qty * 100
             pos_pnl     = val - cost
             pos_pnl_pct = pos_pnl / cost if cost else 0.0
+            pc          = "green" if pos_pnl >= 0 else "red"
+            ps          = "+" if pos_pnl >= 0 else "-"
+            expiry_str  = str(pos["expiry"])
 
-            pc       = "green" if pos_pnl >= 0 else "red"
-            ps       = "+" if pos_pnl >= 0 else "-"
-            pnl_icon = "🟢" if pos_pnl >= 0 else "🔴"
-
-            expiry_str   = str(pos["expiry"])
-            expiry_short = expiry_str[5:] if len(expiry_str) >= 7 else expiry_str
-
-            # 左列第4行：信号类型明确显示，格式统一为 "图标 类型：说明"
-            if sig_type == "ROLL_OUT":
-                sig_tag = f"🟡 ROLL OUT：DTE {dte}天，需续杯换期"
-            elif sig_type == "ROLL_OUT_BLOCKED":
-                sig_tag = f"⚠️ ROLL OUT：DTE {dte}天，现金不足"
-            elif sig_type == "HARVEST":
-                sig_tag = f"🟢 HARVEST：Delta {delta:.3f}，触发收割"
-            elif sig_type == "BEAR_ADD":
-                sig_tag = f"🔴 BEAR ADD：Delta {delta:.3f}，触发加仓"
-            elif sig_type == "BEAR_ADD_COOLDOWN":
-                sig_tag = f"🟠 BEAR ADD：冷却中，Delta {delta:.3f}"
+            if sig_type in ("HARVEST", "ROLL_OUT", "ROLL_OUT_BLOCKED", "BEAR_ADD", "BEAR_ADD_COOLDOWN"):
+                left = (
+                    f"**{pos_id}**\n"
+                    f"行权价 ${pos['strike']:.0f}　到期 {expiry_str}　DTE {dte}天"
+                )
+                right = (
+                    f"Delta **{delta:.3f}**　估价 ${price:.2f}\n"
+                    f"市值 {self._usd(val)}　"
+                    f"<font color='{pc}'>{ps}{self._usd(abs(pos_pnl))} ({pos_pnl_pct:+.1%})</font>"
+                )
+                elements.append(self._column_set(
+                    [self._wcol(11, left), self._wcol(9, right)],
+                    bg="default",
+                ))
+                elements.append(self._hr())
+                # 操作详情（步骤说明）
+                op_blocks = self._operation_block(signal)
+                elements += op_blocks
+                if op_blocks:
+                    elements.append(self._hr())
             else:
-                sig_tag = f"✅ HOLD：DTE {dte}天，持仓观望"
-
-            # 左列固定4行：ID / 行权价 / 到期+DTE / 信号标签
-            left = (
-                f"**{pos_id}**\n"
-                f"行权价　${pos['strike']:.0f}\n"
-                f"到期　{expiry_short}　DTE **{dte}天**\n"
-                f"{sig_tag}"
-            )
-
-            # 右列固定4行：Delta / 估价 / 市值 / P&L（去掉"P&L"标签，用ASCII括号）
-            right = (
-                f"Delta　**{delta:.3f}**\n"
-                f"估价　${price:.2f}\n"
-                f"市值　{self._usd(val)}\n"
-                f"<font color='{pc}'>"
-                f"{pnl_icon} {ps}{self._usd(abs(pos_pnl))} ({pos_pnl_pct:+.1%})"
-                f"</font>"
-            )
-
-            elements.append(self._column_set(
-                [self._column("50%", left), self._column("50%", right)],
-                bg="default",
-            ))
-            # 持仓之间用 hr 分隔（代替深色背景块）
-            elements.append(self._hr())
-            # 有操作指令时输出（如 ROLL_OUT/HARVEST/BEAR_ADD 的买卖单详情）
-            elements += self._operation_block(signal)
+                hold_positions.append((pos, signal, g))
 
         # ── BEAR_ADD（组合级，不依附单一持仓）───────────────────────────
         for sig in bear_signals:
@@ -299,9 +311,49 @@ class LarkNotifier:
             elements += self._operation_block(sig)
             elements.append(self._hr())
 
-        # ── 底部备注（合并为一行）────────────────────────────────────────
+        # ── HOLD 合约：紧凑汇总 ────────────────────────────────────────
+        if hold_positions:
+            elements.append(self._div("**📋 持仓观望（无需操作）**"))
+            for pos, signal, g in hold_positions:
+                pos_id  = pos["id"]
+                delta   = g.get("delta", 0.0)
+                price   = g.get("price", 0.0)
+                dte     = g.get("dte", 0)
+                qty     = pos.get("quantity", 1)
+                val     = price * qty * 100
+                cost    = pos.get("cost_per_share", 0.0) * qty * 100
+                pos_pnl = val - cost
+                pos_pnl_pct = pos_pnl / cost if cost else 0.0
+                pc      = "green" if pos_pnl >= 0 else "red"
+                ps      = "+" if pos_pnl >= 0 else "-"
+                expiry_str = str(pos["expiry"])
+
+                exempt = pos.get("exempt_rollout", False)
+                if exempt and dte < 300:
+                    left = (
+                        f"⏳ **{pos_id}**\n"
+                        f"行权价 ${pos['strike']:.0f}　到期 {expiry_str}　DTE {dte}天\n"
+                        f"<font color='orange'>豁免续杯 — 仅等待 Delta ≥ 0.90 触发 HARVEST</font>"
+                    )
+                else:
+                    left = (
+                        f"✅ **{pos_id}**\n"
+                        f"行权价 ${pos['strike']:.0f}　到期 {expiry_str}　DTE {dte}天"
+                    )
+                right = (
+                    f"Delta **{delta:.3f}**　估价 ${price:.2f}\n"
+                    f"市值 {self._usd(val)}　"
+                    f"<font color='{pc}'>{ps}{self._usd(abs(pos_pnl))} ({pos_pnl_pct:+.1%})</font>"
+                )
+                elements.append(self._column_set(
+                    [self._wcol(11, left), self._wcol(9, right)],
+                    bg="default",
+                ))
+                elements.append(self._hr())
+
+        # ── 底部备注 ────────────────────────────────────────────────────
         elements.append(self._note(
-            f"基准：{self._usd(baseline)}（2026-05-24）　BS估算价格仅供参考，操作以市场报价为准，请使用限价单"
+            f"基准 {self._usd(baseline)}（2026-05-24）　价格为 BS 估算，moomoo 操作请挂限价单（买卖中间价）"
         ))
 
         return {
@@ -326,78 +378,38 @@ class LarkNotifier:
             if s and b:
                 cost_net = abs(signal.get("estimated_net") or 0)
                 blocks.append(self._div(
-                    f"**【操作步骤 — 无限续杯（ROLL OUT）】**\n"
-                    f"合约快到期了，需要把它【滚动】到 2 年后的新合约，保持持仓不中断。\n"
-                    f"\n"
-                    f"**第一步：卖出旧合约（回收资金）**\n"
-                    f"　在 IBKR 下**限价卖单**：\n"
-                    f"　QQQ Call　行权价 ${s['strike']:.0f}　到期 {s['expiry']}　×{s['quantity']} 张\n"
-                    f"　参考挂价 ≈ **${s['est_bid']:.2f}/股**（每张合约约 {self._usd(s['est_bid']*100)}）\n"
-                    f"\n"
-                    f"**第二步：买入新合约（延期 2 年）**\n"
-                    f"　在 IBKR 下**限价买单**：\n"
-                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
-                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**（每张合约约 {self._usd(b['est_ask']*100)}）\n"
-                    f"\n"
-                    f"**第三步：确认资金缺口**\n"
-                    f"　新合约比旧合约贵，差价约 **{self._usd(cost_net)}**（从现金账户扣除）\n"
-                    f"　操作前请确认账户现金 > {self._usd(cost_net)}\n"
-                    f"\n"
-                    f"**第四步：完成后告知 AI**\n"
-                    f"　示例：『完成了 ${s['strike']:.0f}C 续杯，新合约到期 {b['expiry']}，买入价 $XXX』\n"
-                    f"　AI 自动更新持仓记录\n"
-                    f"\n"
-                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
+                    f"**🟡 操作指令 — 无限续杯（ROLL OUT）**\n"
+                    f"卖出　QQQ Call ${s['strike']:.0f}　{s['expiry']}　×{s['quantity']}张"
+                    f"　参考价 ≈ **${s['est_bid']:.2f}**（约 {self._usd(s['est_bid']*100)}）\n"
+                    f"买入　QQQ Call ${b['strike']:.0f}　{b['expiry']}（+{b['target_dte']}天）　×{b['quantity']}张"
+                    f"　参考价 ≈ **${b['est_ask']:.2f}**（约 {self._usd(b['est_ask']*100)}）\n"
+                    f"差价约 **{self._usd(cost_net)}** 从现金扣除　|　moomoo 限价单，挂买卖中间价"
                 ))
 
         elif sig_type == "HARVEST":
             s, b = signal.get("action_sell"), signal.get("action_buy")
             if s and b:
                 net = signal.get("estimated_net") or 0
-                if net > 0:
-                    net_desc = f"操作后现金增加约 **{self._usd(net)}**（净收入归入现金仓位）"
-                else:
-                    net_desc = f"操作后现金减少约 **{self._usd(abs(net))}**（差价从现金扣除）"
+                net_desc = (f"净收入约 **{self._usd(net)}** 归入现金" if net > 0
+                            else f"差价约 **{self._usd(abs(net))}** 从现金扣除")
                 blocks.append(self._div(
-                    f"**【操作步骤 — 收割利润（HARVEST）】**\n"
-                    f"合约 Delta ≥ 0.90，价格已很贵了。卖掉换成更高行权价的新合约，锁定部分利润。\n"
-                    f"\n"
-                    f"**第一步：卖出旧合约（套现）**\n"
-                    f"　在 IBKR 下**限价卖单**：\n"
-                    f"　QQQ Call　行权价 ${s['strike']:.0f}　到期 {s['expiry']}　×{s['quantity']} 张\n"
-                    f"　参考挂价 ≈ **${s['est_bid']:.2f}/股**\n"
-                    f"\n"
-                    f"**第二步：买入新合约（换更高行权价，延期 2 年）**\n"
-                    f"　在 IBKR 下**限价买单**：\n"
-                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
-                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**\n"
-                    f"\n"
-                    f"**第三步：收益情况**\n"
-                    f"　{net_desc}\n"
-                    f"\n"
-                    f"**第四步：完成后告知 AI**\n"
-                    f"　示例：『完成了收割，新合约行权价 ${b['strike']:.0f}，到期 {b['expiry']}，买入价 $XXX』\n"
-                    f"　AI 自动更新持仓记录\n"
-                    f"\n"
-                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
+                    f"**🟢 操作指令 — 收割利润（HARVEST）**\n"
+                    f"卖出　QQQ Call ${s['strike']:.0f}　{s['expiry']}　×{s['quantity']}张"
+                    f"　参考价 ≈ **${s['est_bid']:.2f}**\n"
+                    f"买入　QQQ Call ${b['strike']:.0f}　{b['expiry']}（+{b['target_dte']}天）　×{b['quantity']}张"
+                    f"　参考价 ≈ **${b['est_ask']:.2f}**\n"
+                    f"{net_desc}　|　moomoo 限价单，挂买卖中间价"
                 ))
 
         elif sig_type == "BEAR_ADD":
             b = signal.get("action_buy")
             if b:
-                mode_cn = "重炮模式（现金充足，加倍买入）" if "重炮" in b.get("mode", "") else "标准模式"
+                mode_cn = "重炮" if "重炮" in b.get("mode", "") else "标准"
                 blocks.append(self._div(
-                    f"**【操作步骤 — 逆势加仓（BEAR ADD · {mode_cn}）】**\n"
-                    f"QQQ 下跌 Delta < 0.50，趁低价增持新合约，摊低成本。\n"
-                    f"\n"
-                    f"**在 IBKR 下限价买单**：\n"
-                    f"　QQQ Call　行权价 ${b['strike']:.0f}　到期 {b['expiry']}（约 {b['target_dte']} 天后）　×{b['quantity']} 张\n"
-                    f"　参考挂价 ≈ **${b['est_ask']:.2f}/股**（预计总成本约 {self._usd(b.get('est_cost', 0))}）\n"
-                    f"\n"
-                    f"**完成后告知 AI**：实际买入价 + 到期日，系统自动进入 **30 天冷却期**\n"
-                    f"（冷却期内即使 Delta 仍低，也不会再触发加仓信号）\n"
-                    f"\n"
-                    f"⚠️ **务必使用限价单**，挂买卖中间价，耐心等待成交，**切勿使用市价单**"
+                    f"**🔴 操作指令 — 逆势加仓（BEAR ADD · {mode_cn}模式）**\n"
+                    f"买入　QQQ Call ${b['strike']:.0f}　{b['expiry']}（+{b['target_dte']}天）　×{b['quantity']}张"
+                    f"　参考价 ≈ **${b['est_ask']:.2f}**（约 {self._usd(b.get('est_cost', 0))}）\n"
+                    f"完成后告知 AI，进入 30 天冷却期　|　moomoo 限价单，挂买卖中间价"
                 ))
 
         elif sig_type == "ROLL_OUT_BLOCKED":
@@ -408,6 +420,142 @@ class LarkNotifier:
             ))
 
         return blocks
+
+    # ── 资产盘点卡片（手动触发，仅罗列资产，无操作指令）─────────────────────
+
+    def _build_snapshot_card(
+        self,
+        account: Dict,
+        positions: List[Dict],
+        qqq_price: float,
+        cash_pct: float,
+        position_greeks: Dict[str, Dict] = None,
+        harvest_credits: float = 0.0,
+        total_invested: float = 0.0,
+    ) -> Dict:
+        """
+        手动盘点卡片：简洁罗列资产状况，无操作指令。
+        account:        {cash, base_nav, qqq_change_pct?, qqq_date?}
+        positions:      [{id, strike, expiry, quantity, cost_per_share}]
+        qqq_price:      float
+        cash_pct:       float  (0~1)
+        position_greeks:{pos_id: {delta, price, dte}}
+        """
+        greeks   = position_greeks or {}
+        cash     = float(account["cash"])
+        baseline = float(account.get("base_nav", 100_000.0))
+        qqq_chg  = float(account.get("qqq_change_pct", 0.0))
+        qqq_date = account.get("qqq_date", str(date.today()))
+
+        opt_val = sum(
+            greeks.get(p["id"], {}).get("price", 0.0) * p.get("quantity", 1) * 100
+            for p in positions
+        )
+        total   = cash + opt_val
+        pnl     = total - baseline
+        pnl_pct = pnl / baseline if baseline else 0.0
+        opt_pct = opt_val / total if total else 0.0
+
+        elements: list = []
+
+        # QQQ 行情（左50%价格 | 右50%涨跌）
+        qqq_arrow = "📈" if qqq_chg >= 0 else "📉"
+        qqq_chg_color = "green" if qqq_chg >= 0 else "red"
+        elements.append(self._column_set([
+            self._wcol(1, f"**QQQ**　　**${qqq_price:.2f}**"),
+            self._wcol(1, f"{qqq_arrow} 较前日 　<font color='{qqq_chg_color}'>**{qqq_chg:+.2%}**</font>"),
+        ]))
+        elements.append(self._hr())
+
+        # 资产概览（三列等宽 grey，weight=1 三等分）
+        pnl_color = "green" if pnl >= 0 else "red"
+        pnl_sign  = "+" if pnl >= 0 else ""
+        cash_warn = "  ⚠️" if cash_pct < 0.10 else ""
+
+        col_total = self._wcol(1,
+            f"**总资产**\n"
+            f"**${total:,.0f}**\n"
+            f"<font color='{pnl_color}'>{pnl_sign}${abs(pnl):,.0f} ({pnl_pct:+.2%})</font>"
+        )
+        col_opt = self._wcol(1,
+            f"**期权市值**\n"
+            f"**{self._usd(opt_val)}**\n"
+            f"占比 {opt_pct:.1%}"
+        )
+        col_cash = self._wcol(1,
+            f"**现金**\n"
+            f"**{self._usd(cash)}**\n"
+            f"占比 {cash_pct:.1%}{cash_warn}"
+        )
+        elements.append(self._column_set([col_total, col_opt, col_cash], bg="grey"))
+        elements.append(self._cost_recovery_line(harvest_credits, total_invested))
+        elements.append(self._hr())
+
+        # 持仓明细（紧凑，只显示数据 + 单行状态，无操作指令）
+        elements.append(self._div("**📋 持仓明细**"))
+
+        for pos in positions:
+            pos_id = pos["id"]
+            g      = greeks.get(pos_id, {})
+            delta  = g.get("delta", 0.0)
+            price  = g.get("price", 0.0)
+            dte    = g.get("dte", 0)
+
+            qty     = pos.get("quantity", 1)
+            val     = price * qty * 100
+            cost    = pos.get("cost_per_share", 0.0) * qty * 100
+            pos_pnl = val - cost
+            pos_pnl_pct = pos_pnl / cost if cost else 0.0
+
+            pc         = "green" if pos_pnl >= 0 else "red"
+            ps         = "+" if pos_pnl >= 0 else "-"
+            expiry_str = str(pos["expiry"])
+
+            # 单行信号状态
+            exempt = pos.get("exempt_rollout", False)
+            if delta >= 0.90:
+                status = f"🟢 HARVEST — Delta {delta:.3f} ≥ 0.90，可收割"
+            elif delta < 0.50:
+                status = f"🔴 BEAR ADD — Delta {delta:.3f} < 0.50，可加仓"
+            elif dte < 300 and not exempt:
+                status = f"🟡 ROLL OUT — DTE {dte}天 < 300，需续杯换期"
+            elif dte < 300 and exempt:
+                status = f"⏳ 豁免续杯 — DTE {dte}天，等待 Delta ≥ 0.90"
+            else:
+                status = f"✅ HOLD — DTE {dte}天，持仓观望"
+
+            left = (
+                f"**{pos_id}**\n"
+                f"行权价 ${pos['strike']:.0f}　到期 {expiry_str}　DTE **{dte}天**\n"
+                f"{status}"
+            )
+            right = (
+                f"Delta **{delta:.3f}**\n"
+                f"估价 ${price:.2f}　市值 {self._usd(val)}\n"
+                f"<font color='{pc}'>{ps}{self._usd(abs(pos_pnl))} ({pos_pnl_pct:+.1%})</font>"
+            )
+
+            elements.append(self._column_set(
+                [self._wcol(11, left), self._wcol(9, right)],
+                bg="default",
+            ))
+            elements.append(self._hr())
+
+        elements.append(self._note(
+            f"基准 {self._usd(baseline)}（2026-05-24）　BS估算价格仅供参考，以市场报价为准"
+        ))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title":    self._text(f"📊 资产盘点　[{qqq_date}]"),
+                    "template": "blue",
+                },
+                "elements": elements,
+            },
+        }
 
     # ── 发送 ──────────────────────────────────────────────────────────────
 
@@ -444,7 +592,12 @@ class LarkNotifier:
 
 # ── 模块级兼容函数（供 main.py 调用，接口不变）───────────────────────────
 
-def build_card(pf, results, quote_date, baseline: float = 100_000.0) -> dict:
+def build_card(
+    pf, results, quote_date,
+    baseline: float = 100_000.0,
+    harvest_credits: float = 0.0,
+    total_option_invested: float = 0.0,
+) -> dict:
     """把 PortfolioState / List[SignalResult] 转为 Dict 接口后构建卡片"""
     account = {
         "cash":           pf.cash,
@@ -460,6 +613,7 @@ def build_card(pf, results, quote_date, baseline: float = 100_000.0) -> dict:
             "expiry":         str(pos.expiry),
             "quantity":       pos.quantity,
             "cost_per_share": pos.cost_per_share,
+            "exempt_rollout": getattr(pos, "exempt_rollout", False),
         }
         for pos in pf.positions
     ]
@@ -491,6 +645,8 @@ def build_card(pf, results, quote_date, baseline: float = 100_000.0) -> dict:
     return notifier._build_portfolio_card(
         account, positions, signals, pf.qqq_close, pf.cash_pct, position_greeks,
         report_mode="daily",
+        harvest_credits=harvest_credits,
+        total_invested=total_option_invested,
     )
 
 
