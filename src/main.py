@@ -166,13 +166,28 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         return
 
     # 8. 构建并发送飞书卡片
-    harvest_credits      = ss.get_cumulative_harvest_credits()
-    initial_option_cost  = float(pos_raw["portfolio"].get("initial_option_cost", 0.0))
+    harvest_credits       = ss.get_cumulative_harvest_credits()
+    initial_option_cost   = float(pos_raw["portfolio"].get("initial_option_cost", 0.0))
     total_option_invested = ss.get_total_option_invested(initial_option_cost)
+
+    # 生成趋势图并上传至飞书图床（需配置 LARK_APP_ID / LARK_APP_SECRET）
+    img_key = None
+    if not dry_run:
+        app_id     = os.environ.get("LARK_APP_ID", "")
+        app_secret = os.environ.get("LARK_APP_SECRET", "")
+        try:
+            from chart_generator import generate_trend_chart
+            from feishu_uploader  import upload_chart
+            chart_path = generate_trend_chart()
+            img_key    = upload_chart(chart_path, app_id, app_secret)
+        except Exception as e:
+            log.warning(f"趋势图生成/上传失败，跳过图片：{e}")
+
     card = ln.build_card(
         pf, results, quote["date"], baseline=baseline,
         harvest_credits=harvest_credits,
         total_option_invested=total_option_invested,
+        img_key=img_key,
     )
 
     if dry_run:

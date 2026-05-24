@@ -140,6 +140,7 @@ class LarkNotifier:
         report_mode: str = "daily",
         harvest_credits: float = 0.0,
         total_invested: float = 0.0,
+        img_key: Optional[str] = None,
     ) -> Dict:
         """
         构建飞书卡片。
@@ -206,6 +207,17 @@ class LarkNotifier:
                 header_color = "green"
 
         elements: list = []
+
+        # ── 趋势图（飞书图床 img_key，可选）──────────────────────────────
+        if img_key:
+            elements.append({
+                "tag":     "img",
+                "img_key": img_key,
+                "alt":     {"tag": "plain_text", "content": "QQQ 6-month trend"},
+                "mode":    "fit_horizontal",
+                "preview": True,
+            })
+            elements.append(self._hr())
 
         # ── QQQ 行情行（左右各占 1/2，weight 等分）────────────────────────
         qqq_arrow = "📈" if qqq_chg >= 0 else "📉"
@@ -597,6 +609,7 @@ def build_card(
     baseline: float = 100_000.0,
     harvest_credits: float = 0.0,
     total_option_invested: float = 0.0,
+    img_key: Optional[str] = None,
 ) -> dict:
     """把 PortfolioState / List[SignalResult] 转为 Dict 接口后构建卡片"""
     account = {
@@ -647,6 +660,7 @@ def build_card(
         report_mode="daily",
         harvest_credits=harvest_credits,
         total_invested=total_option_invested,
+        img_key=img_key,
     )
 
 
