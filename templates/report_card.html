@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: transparent; display: inline-block; }
+  </style>
+</head>
+<body>
+<div id="card-root"></div>
+
+<script>const REPORT_DATA = "__REPORT_DATA__";</script>
+
+<script type="text/babel">
+const CHART_B64 = REPORT_DATA.chartB64 || '';
+
+// ── Design tokens ──────────────────────────────────────────────────────────
+const T = {
+  bg:        '#FAFAF7',
+  surface:   '#FFFFFF',
+  border:    '#E8E5DE',
+  text:      '#15161A',
+  textDim:   '#6B6B73',
+  textMute:  '#9A9AA3',
+  green:     '#0F8A4F',
+  greenSoft: '#E6F3EC',
+  red:       '#C0392B',
+  redSoft:   '#FBE9E7',
+  amber:     '#B86E00',
+  amberSoft: '#FCEFD9',
+  blue:      '#1F4FB2',
+};
+
+const MONO = "'IBM Plex Mono', monospace";
+const SANS = "'IBM Plex Sans', sans-serif";
+
+const Ty = {
+  display:  { fontSize: 26, fontWeight: 600, fontFamily: MONO, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' },
+  title:    { fontSize: 15, fontWeight: 600, lineHeight: 1.25, fontFamily: SANS },
+  number:   { fontSize: 14, fontWeight: 600, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 },
+  body:     { fontSize: 12, fontWeight: 400, lineHeight: 1.45, fontFamily: SANS },
+  bodyMono: { fontSize: 12, fontWeight: 400, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', lineHeight: 1.45 },
+  label:    { fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', fontFamily: MONO },
+  micro:    { fontSize: 9,  fontWeight: 400, fontFamily: MONO, letterSpacing: '0.05em' },
+};
+
+// ── Sub-components ─────────────────────────────────────────────────────────
+
+function SectionHeader({ title, right }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  paddingBottom: 10, borderBottom: `1px solid ${T.border}`, marginBottom: 14 }}>
+      <h3 style={{ ...Ty.title, color: T.text, margin: 0 }}>{title}</h3>
+      {right && <div style={{ ...Ty.bodyMono, color: T.textDim }}>{right}</div>}
+    </div>
+  );
+}
+
+function StatusPill({ signal, label }) {
+  const map = {
+    HOLD:     { bg: '#EFEFEA',   fg: '#3A3A3A', dot: '#7A7A7A' },
+    ROLL_OUT: { bg: T.amberSoft, fg: T.amber,   dot: T.amber   },
+    HARVEST:  { bg: T.greenSoft, fg: T.green,   dot: T.green   },
+    BEAR_ADD: { bg: T.redSoft,   fg: T.red,     dot: T.red     },
+  };
+  const s = map[signal] || map.HOLD;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                   padding: '5px 11px', borderRadius: 999,
+                   background: s.bg, color: s.fg, ...Ty.body, fontWeight: 600 }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.dot }} />
+      {signal} · {label}
+    </span>
+  );
+}
+
+function KpiCell({ label, value, sub, subColor }) {
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ ...Ty.label, color: T.textMute, marginBottom: 8 }}>{label}</div>
+      <div style={{ ...Ty.display, color: T.text }}>{value}</div>
+      {sub && <div style={{ ...Ty.bodyMono, color: subColor || T.textDim, marginTop: 6 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function AllocBar({ optionsPct, cashPct }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: T.border }}>
+        <div style={{ width: `${optionsPct}%`, background: T.blue }} />
+        <div style={{ width: `${cashPct}%`, background: '#C8C5BD' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, ...Ty.bodyMono, color: T.textDim }}>
+        <span>
+          <span style={{ display:'inline-block', width:8, height:8, background:T.blue, borderRadius:2, marginRight:6, verticalAlign:'middle' }} />
+          期权 {optionsPct}%
+        </span>
+        <span>
+          现金 {cashPct}%
+          <span style={{ display:'inline-block', width:8, height:8, background:'#C8C5BD', borderRadius:2, marginLeft:6, verticalAlign:'middle' }} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ZeroCostBar({ pct }) {
+  return (
+    <div style={{ position:'relative', height:10, background:'#FFFFFF',
+                  border:`1px solid ${T.border}`, borderRadius:5, overflow:'hidden' }}>
+      <div style={{ height:'100%', width:`${pct}%`, background:T.green }} />
+      {[25, 50, 75].map(m => (
+        <div key={m} style={{ position:'absolute', left:`${m}%`, top:0, bottom:0, width:1, background:T.border }} />
+      ))}
+    </div>
+  );
+}
+
+function PositionBadge({ state, stateLabel }) {
+  const map = {
+    HOLD:         { bg: '#EFEFEA',   fg: '#3A3A3A', icon: '✓'  },
+    HARVEST_WAIT: { bg: T.amberSoft, fg: T.amber,   icon: '⏳' },
+    ROLL_OUT:     { bg: T.amberSoft, fg: T.amber,   icon: '⟳'  },
+    HARVEST:      { bg: T.greenSoft, fg: T.green,   icon: '↑'  },
+    BEAR_ADD:     { bg: T.redSoft,   fg: T.red,     icon: '↓'  },
+  };
+  const s = map[state] || map.HOLD;
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:5,
+                   padding:'3px 8px', borderRadius:4, background:s.bg, color:s.fg,
+                   ...Ty.label, letterSpacing:'0.05em', textTransform:'none' }}>
+      <span>{s.icon}</span>{stateLabel}
+    </span>
+  );
+}
+
+function DeltaGauge({ delta }) {
+  const pct = delta * 100;
+  return (
+    <div style={{ position:'relative', height:6, background:'#EDEAE2', borderRadius:3, overflow:'hidden' }}>
+      <div style={{ position:'absolute', left:0, top:0, bottom:0, width:'50%', background:'rgba(192,57,43,0.08)' }} />
+      <div style={{ position:'absolute', left:'90%', top:0, bottom:0, right:0, background:'rgba(15,138,79,0.18)' }} />
+      <div style={{ position:'absolute', left:`${pct}%`, top:-2, bottom:-2,
+                    width:2, background:T.text, transform:'translateX(-1px)' }} />
+    </div>
+  );
+}
+
+function PriceChart({ height }) {
+  if (!CHART_B64) {
+    return (
+      <div style={{ height, background:'#F0EEE8', borderRadius:4,
+                    display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <span style={{ ...Ty.micro, color: T.textMute }}>暂无图表数据</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`data:image/png;base64,${CHART_B64}`}
+      style={{ width:'100%', height, display:'block', borderRadius:4,
+               objectFit:'cover', objectPosition:'top' }}
+    />
+  );
+}
+
+function Position({ p }) {
+  const isPos = p.pnl >= 0;
+  return (
+    <div style={{ padding:'16px 0', borderTop:`1px solid ${T.border}` }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
+        <div>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+            <div style={{ ...Ty.number, color: T.text }}>{p.id}</div>
+            <PositionBadge state={p.state} stateLabel={p.stateLabel} />
+          </div>
+          <div style={{ ...Ty.bodyMono, color: T.textDim }}>
+            行权 ${p.strike} · 到期 {p.expiry} ·{' '}
+            <span style={{ color: p.dte < 300 ? T.amber : T.textDim,
+                           fontWeight: p.dte < 300 ? 600 : 400 }}>
+              DTE {p.dte}
+            </span>
+          </div>
+        </div>
+        <div style={{ textAlign:'right' }}>
+          <div style={{ ...Ty.number, color: T.text }}>${p.value.toLocaleString()}</div>
+          <div style={{ ...Ty.bodyMono, color: isPos ? T.green : T.red, fontWeight:600, marginTop:3 }}>
+            {isPos ? '+' : ''}${p.pnl.toLocaleString()} ({isPos ? '+' : ''}{p.pnlPct.toFixed(1)}%)
+          </div>
+          <div style={{ ...Ty.bodyMono, color: T.textDim, marginTop:6 }}>
+            <span style={{ color: T.textMute }}>估价 </span>
+            <span style={{ color: T.text }}>${p.price}</span>
+            <span style={{ color: T.border, margin:'0 6px' }}>·</span>
+            <span style={{ color: T.textMute }}>成本 </span>
+            <span>${p.cost.toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop:14 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+          <span style={{ ...Ty.label, color: T.textMute }}>Delta</span>
+          <span style={{ ...Ty.bodyMono, color: T.text, fontWeight:600 }}>{p.delta.toFixed(3)}</span>
+        </div>
+        <DeltaGauge delta={p.delta} />
+        <div style={{ display:'flex', justifyContent:'space-between', marginTop:4, ...Ty.micro, color: T.textMute }}>
+          <span>BEAR &lt;.50</span>
+          <span>.90 HARVEST</span>
+        </div>
+      </div>
+      {p.note && (
+        <div style={{ marginTop:12, padding:'8px 12px', background: T.amberSoft,
+                      borderRadius:4, ...Ty.body, color: T.amber }}>
+          {p.note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Root component ─────────────────────────────────────────────────────────
+
+function App() {
+  const d = REPORT_DATA;
+  const qqpUp  = d.qqq.change >= 0;
+  const baseUp = d.baselinePnL >= 0;
+  const posRight = d.signal === 'HOLD' ? '无需操作' : '⚠ 需执行操作';
+
+  return (
+    <div style={{ width:620, background:T.bg, fontFamily:SANS, color:T.text,
+                  padding:22, boxSizing:'border-box' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:18 }}>
+        <div>
+          <div style={{ ...Ty.label, color:T.textMute, marginBottom:6 }}>QQQ LEAPS · DAILY REPORT</div>
+          <div style={{ ...Ty.title, fontFamily:MONO, color:T.text, fontVariantNumeric:'tabular-nums' }}>
+            {d.date} <span style={{ color:T.textMute, fontWeight:400 }}>{d.weekday}</span>
+          </div>
+        </div>
+        <StatusPill signal={d.signal} label={d.signalLabel} />
+      </div>
+
+      {/* KPI row */}
+      <div style={{ display:'flex', gap:20, padding:'18px 20px',
+                    background:T.surface, border:`1px solid ${T.border}`,
+                    borderRadius:10, marginBottom:16 }}>
+        <KpiCell
+          label="总资产"
+          value={`$${d.totalAssets.toLocaleString()}`}
+          sub={`${baseUp?'+':''}$${Math.abs(d.baselinePnL).toLocaleString()} · ${baseUp?'+':''}${d.baselinePnLPct.toFixed(2)}% vs 基准`}
+          subColor={baseUp ? T.green : T.red}
+        />
+        <div style={{ width:1, background:T.border }} />
+        <KpiCell
+          label="QQQ"
+          value={`$${d.qqq.price}`}
+          sub={`${qqpUp?'+':''}${d.qqq.change}% 较前日`}
+          subColor={qqpUp ? T.green : T.red}
+        />
+      </div>
+
+      {/* Chart */}
+      <div style={{ background:T.surface, border:`1px solid ${T.border}`,
+                    borderRadius:10, padding:'14px 14px 8px', marginBottom:16 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline',
+                      paddingBottom:10, marginBottom:4 }}>
+          <h3 style={{ ...Ty.title, color:T.text, margin:0 }}>QQQ 走势</h3>
+          <span style={{ ...Ty.label, color:T.textMute }}>近 6 个月</span>
+        </div>
+        <PriceChart height={170} />
+      </div>
+
+      {/* Allocation */}
+      <div style={{ background:T.surface, border:`1px solid ${T.border}`,
+                    borderRadius:10, padding:'16px 18px', marginBottom:14 }}>
+        <SectionHeader
+          title="仓位配置"
+          right={
+            <span>
+              期权 <span style={{ color:T.text, fontWeight:600 }}>${d.optionsValue.toLocaleString()}</span>
+              {' · '}
+              现金 <span style={{ color:T.text, fontWeight:600 }}>${d.cash.toLocaleString()}</span>
+            </span>
+          }
+        />
+        <AllocBar optionsPct={d.optionsPct} cashPct={d.cashPct} />
+      </div>
+
+      {/* Zero cost */}
+      <div style={{ background:'#F4F1E9', border:`1px solid ${T.border}`,
+                    borderRadius:10, padding:'16px 18px', marginBottom:16 }}>
+        <SectionHeader
+          title="零成本进度"
+          right={<span style={{ ...Ty.number, color:T.text }}>{d.zeroCost.pct.toFixed(1)}%</span>}
+        />
+        <ZeroCostBar pct={d.zeroCost.pct} />
+        <div style={{ display:'flex', justifyContent:'space-between', marginTop:12,
+                      ...Ty.bodyMono, color:T.textDim }}>
+          <span>已收割 <span style={{ color:T.green, fontWeight:600 }}>${d.zeroCost.harvested.toLocaleString()}</span></span>
+          <span>总投入 ${d.zeroCost.invested.toLocaleString()}</span>
+          <span>还差 ${d.zeroCost.remaining.toLocaleString()}</span>
+        </div>
+      </div>
+
+      {/* Positions */}
+      <div style={{ background:T.surface, border:`1px solid ${T.border}`,
+                    borderRadius:10, padding:'16px 18px 6px' }}>
+        <SectionHeader
+          title={`持仓 · ${d.positions.length} 张`}
+          right={posRight}
+        />
+        {d.positions.map(p => <Position key={p.id} p={p} />)}
+      </div>
+
+      {/* Footer */}
+      <div style={{ marginTop:16, padding:'12px 0 0', borderTop:`1px solid ${T.border}`,
+                    ...Ty.micro, color:T.textMute, lineHeight:1.7 }}>
+        {d.footer}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('card-root')).render(<App />);
+</script>
+</body>
+</html>

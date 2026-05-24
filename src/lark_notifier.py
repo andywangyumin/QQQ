@@ -664,6 +664,25 @@ def build_card(
     )
 
 
+def build_image_card(img_key: str) -> dict:
+    """构建仅含单张图片的飞书卡片（用于图片日报）"""
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag":     "img",
+                    "img_key": img_key,
+                    "alt":     {"tag": "plain_text", "content": "QQQ LEAPS 日报"},
+                    "mode":    "fit_horizontal",
+                    "preview": True,
+                }
+            ],
+        },
+    }
+
+
 def send(webhook_url: str, card: dict, secret: Optional[str] = None) -> bool:
     """模块级发送函数，保持向后兼容"""
     return LarkNotifier(webhook_url, secret).send(card)
