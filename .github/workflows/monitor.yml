@@ -13,13 +13,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Restore state DB (冷却期 & 去重记录)
+      - name: Restore logs DB (state + market history)
         uses: actions/cache@v4
         with:
-          path: logs/state.db
-          key: state-db-${{ github.run_id }}
+          path: logs/
+          key: logs-db-${{ github.run_id }}
           restore-keys: |
-            state-db-
+            logs-db-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,3 +33,5 @@ jobs:
         run: python src/main.py
         env:
           LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
+          LARK_APP_ID:       ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET:   ${{ secrets.LARK_APP_SECRET }}
