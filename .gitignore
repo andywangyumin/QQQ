@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 logs/*.log
 logs/cron.log
-# state.db 由 GitHub Actions cache 管理，不提交
-logs/state.db
+# DB 文件和生成图片由 GitHub Actions cache 管理，不提交
+logs/*.db
+charts/
