@@ -255,7 +255,7 @@ function App() {
         <KpiCell
           label="总资产"
           value={`$${d.totalAssets.toLocaleString()}`}
-          sub={`${baseUp?'+':''}$${Math.abs(d.baselinePnL).toLocaleString()} · ${baseUp?'+':''}${d.baselinePnLPct.toFixed(2)}% vs 基准`}
+          sub={`${baseUp ? '+' : '-'}$${Math.abs(d.baselinePnL).toLocaleString()} · ${baseUp ? '+' : ''}${d.baselinePnLPct.toFixed(2)}% vs 基准`}
           subColor={baseUp ? T.green : T.red}
         />
         <div style={{ width:1, background:T.border }} />
