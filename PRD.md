@@ -1,7 +1,7 @@
 # PRD：QQQ LEAPS Call 无限续杯自动化监控系统
 
-**文档版本**：v4.0  
-**最后更新**：2026-05-24  
+**文档版本**：v4.1  
+**最后更新**：2026-05-25  
 **核心标的**：仅 QQQ（纳斯达克 100 指数 ETF）
 
 ---
@@ -113,15 +113,29 @@
 
 ---
 
-## 三、信号优先级
+## 三、信号优先级与阻断通知
 
 ```
-1. 现金 < 10%              → 阻断一切净支出操作
+1. 现金 < 10%              → 阻断净支出操作，发出 BLOCKED 通知
 2. DTE < 300（ROLL_OUT）   → 最高优先，保命续杯（豁免合约跳过）
 3. Delta ≥ 0.9（HARVEST）  → 收割利润
 4. Delta < 0.5（BEAR_ADD） → 逆势加仓
 5. 以上均不满足            → HOLD，无操作
 ```
+
+### 完整信号类型（7 种）
+
+| 信号 | 触发条件 | 推送颜色 | 说明 |
+|------|---------|---------|------|
+| `HARVEST` | Delta ≥ 0.90 | 🟢 绿色 | 收割利润，有操作指令 |
+| `ROLL_OUT` | DTE < 300 且 Delta < 0.90 | 🟡 琥珀 | 续杯换期，有操作指令 |
+| `ROLL_OUT_BLOCKED` | 同上但现金 < 10% | 🔴 红色 | 需续杯但现金不足，通知用户等待 |
+| `BEAR_ADD` | Delta < 0.50，现金充足，无冷却 | 🔴 红色 | 逆势加仓，有操作指令 |
+| `BEAR_ADD_BLOCKED` | Delta < 0.50 但现金 < 10% | 🟡 琥珀 | 加仓条件满足但现金不足 |
+| `BEAR_ADD_COOLDOWN` | Delta < 0.50 但在冷却期内 | 🟡 琥珀 | 加仓冷却中，告知剩余天数 |
+| `HOLD` | 以上均不满足 | ⚪ 灰色 | 无操作，继续持仓 |
+
+**BLOCKED 通知机制**：现金 < 10% 时，ROLL_OUT 和 BEAR_ADD 均不会静默跳过，而是显式推送阻断通知，用户可知晓并等待现金回升后再操作。
 
 ---
 
@@ -220,17 +234,20 @@ monitor/
 ├── src/
 │   ├── bs_model.py               # Black-Scholes 定价模型（Delta、Gamma、价格）
 │   ├── data_fetcher.py           # QQQ 行情 + 期权 IV（yfinance）
-│   ├── signal_engine.py          # 三大信号判断引擎（含 exempt_rollout 支持）
+│   ├── signal_engine.py          # 7 类信号判断引擎（含 BLOCKED / COOLDOWN 通知）
 │   ├── state_store.py            # SQLite：冷却期 + 推送去重 + 零成本指标追踪
 │   ├── history_store.py          # SQLite：QQQ 5 年历史价格（market_history.db）
 │   ├── backfill_history.py       # 一次性回填 5 年历史数据（已执行）
 │   ├── chart_generator.py        # QQQ 6 个月趋势图生成（含操作标注）
+│   ├── card_renderer.py          # 图片日报：REPORT_DATA 构建 + Playwright 截图
 │   ├── feishu_uploader.py        # 飞书图片上传（tenant_access_token → img_key）
-│   ├── lark_notifier.py          # 飞书卡片构建 + 推送（日报 + 快照两种卡片）
+│   ├── lark_notifier.py          # 飞书卡片构建 + 推送（图片优先，文字降级）
 │   ├── main.py                   # 主入口（--dry-run / --force）
 │   └── snapshot.py               # 手动触发：资产快照推送
-├── charts/                       # 趋势图输出（.gitignore 排除，Actions 运行时自动生成）
-├── logs/                         # state.db + market_history.db（.gitignore 排除，Actions cache 持久化）
+├── templates/
+│   └── report_card.html          # React/JSX 日报模板（Playwright 截图用）
+├── charts/                       # 趋势图 + 日报 PNG（.gitignore 排除，运行时生成）
+├── logs/                         # state.db + market_history.db（.gitignore 排除）
 ├── requirements.txt
 ├── .env.example
 └── .gitignore
@@ -247,7 +264,8 @@ monitor/
 | 历史价格 | SQLite `market_history.db`（5 年 QQQ 日线） | 用于趋势图；每日自动追加 |
 | 趋势图 | matplotlib（Agg 后端）→ 飞书图床 | 6 个月价格 + 操作标注 |
 | 飞书图片 | 自定义应用 API（App ID + Secret → img_key） | `LARK_APP_ID` / `LARK_APP_SECRET` |
-| 持仓状态 | SQLite `state.db`（冷却期 + 去重 + 零成本追踪） | Actions cache 跨运行持久化 |
+| 日报图片 | React/JSX + Playwright → PNG → 飞书图床 | 图片优先推送；失败自动降级文字卡片 |
+| 持仓状态 | SQLite `state.db`（冷却期 + 去重 + 零成本追踪） | Actions cache（快速）+ Artifact（90天备份）双保险 |
 | 推送 | 飞书 Lark Webhook（支持多个，逗号分隔） | `LARK_WEBHOOK_URLS` |
 | 定时任务 | GitHub Actions cron `0 10 * * 1-5` | UTC 10:00 = 北京时间 18:00，周一至周五 |
 | 代码托管 | GitHub 私有仓库 | https://github.com/andywangyumin/QQQ |
@@ -283,27 +301,53 @@ monitor/
 
 ---
 
-## 九、飞书日报卡片结构
+## 九、飞书日报推送形式
+
+### 9.1 图片日报（优先）
+
+每日推送为 **PNG 图片卡片**（Playwright 截图 React/JSX 模板），包含：
 
 ```
-┌─────────────────────────────────────────┐
-│  [QQQ 6 个月趋势图]                      │
-│  ▲ HARVEST  ◆ ROLL OUT  ▼ BEAR ADD      │
-├─────────────────────────────────────────┤
-│  QQQ $717.54          📈 较前日 +0.42%  │
-├───────────┬───────────┬─────────────────┤
-│ 总资产     │ 期权价值  │ 现金            │
-│ $99,981   │ $33,676  │ $66,305 (66.3%) │
-├─────────────────────────────────────────┤
-│ 💰 零成本进度  ░░░░░░░░░░  0.0%         │
-│    已收割 $0 / 投入 $20,352  · 还差 $20,352 │
-├─────────────────────────────────────────┤
-│  [操作信号区] 有信号时展示操作指令         │
-│  [HOLD 区]  各持仓 Delta / DTE / 豁免状态  │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ QQQ LEAPS · DAILY REPORT                    │
+│ 2026-05-25 周一         [HOLD · 今日无操作]   │
+├──────────────────────┬──────────────────────┤
+│ 总资产 $99,981         │ QQQ $479.32          │
+│ +$X · +X% vs 基准     │ +0.42% 较前日         │
+├─────────────────────────────────────────────┤
+│ [QQQ 6 个月走势图，含 ▲ HARVEST ▼ BEAR_ADD]   │
+├─────────────────────────────────────────────┤
+│ 仓位配置                                      │
+│ 期权 ██████░░  X%  ·  现金 ░░██  X%          │
+├─────────────────────────────────────────────┤
+│ 零成本进度  ░░░░░░░░░░  0.0%                  │
+│ 已收割 $0 / 投入 $20,352 · 还差 $20,352       │
+├─────────────────────────────────────────────┤
+│ 持仓 · 3 张                    无需操作       │
+│ QQQ_261218_620C  [豁免续杯]    Delta 0.632    │
+│ QQQ_261218_630C  [豁免续杯]    Delta 0.601    │
+│ QQQ_270331_705C  [HOLD]        Delta 0.712    │
+└─────────────────────────────────────────────┘
 ```
 
-**操作指令格式（有信号时）**：
+**图片状态 Pill 颜色对照**：
+
+| 信号 | Pill 颜色 | 持仓节区副标题 |
+|------|----------|--------------|
+| HARVEST | 绿色 | ⚠ 需执行操作 |
+| ROLL_OUT | 琥珀色 | ⚠ 需执行操作 |
+| ROLL_OUT_BLOCKED | 红色 | ⚠ 续杯受阻，等待现金回升 |
+| BEAR_ADD | 红色 | ⚠ 需执行操作 |
+| BEAR_ADD_BLOCKED | 琥珀色 | ⚠ 加仓受阻，等待现金回升 |
+| BEAR_ADD_COOLDOWN | 琥珀色 | ⏳ 加仓冷却中 |
+| HOLD | 灰色 | 无需操作 |
+
+### 9.2 文字卡片（降级 fallback）
+
+当 Playwright / 飞书图床上传失败时，自动降级为结构化飞书文字卡片，内容相同，格式为飞书 interactive card（Markdown 列宽布局）。
+
+### 9.3 操作指令格式（有信号时）
+
 - ① 卖出限价单：合约详情 + 参考价
 - ② 买入限价单：合约详情 + 参考价
 - ③ 预估成本 / 净收益
@@ -331,11 +375,14 @@ monitor/
 
 ### 自动运行（无需手动）
 每个工作日北京时间 18:00，GitHub Actions 自动执行：
-1. 拉取 QQQ 最新收盘价和期权数据
-2. 计算各持仓 Greeks（Delta、价格、DTE）
-3. 生成 QQQ 6 个月趋势图并上传飞书图床
-4. 判断三大信号
-5. 推送飞书卡片（含趋势图 + 资产盘点 + 操作指令 + 零成本进度）
+1. 从 Cache / Artifact 恢复 `logs/state.db`（双保险，防 Cache 失效）
+2. 拉取 QQQ 最新收盘价和期权数据
+3. 计算各持仓 Greeks（Delta、价格、DTE）
+4. 判断全部 7 类信号（含 BLOCKED / COOLDOWN 阻断通知）
+5. 生成 QQQ 6 个月趋势图
+6. 用 Playwright 渲染 React/JSX 日报模板 → PNG → 上传飞书图床
+7. 优先推送图片日报；失败时自动降级为文字卡片
+8. 运行后将 `state.db` 上传为 Artifact（90 天备份）
 
 ### 执行操作后（唯一需要手动的步骤）
 在券商完成操作后，将以下信息告知 AI：
@@ -372,3 +419,7 @@ python snapshot.py
 - [x] **QQQ 趋势图**：chart_generator.py，6 个月价格 + 操作标注，每日自动生成
 - [x] **飞书图床上传**：feishu_uploader.py，自定义应用 API，卡片顶部展示趋势图
 - [x] **卡片 UI 优化**：weighted 列宽（QQQ 行 1:1，资产总览 1:1:1，持仓行对齐）
+- [x] **图片日报**：React/JSX 模板 + Playwright 截图 → PNG → 飞书图床，含 KPI、仓位图、趋势图、零成本进度、逐仓明细
+- [x] **全信号覆盖**：7 类信号（HARVEST / ROLL_OUT / ROLL_OUT_BLOCKED / BEAR_ADD / BEAR_ADD_BLOCKED / BEAR_ADD_COOLDOWN / HOLD）在图片和文字两套卡片中均完整展示
+- [x] **BLOCKED 通知机制**：现金不足时不再静默跳过，ROLL_OUT_BLOCKED / BEAR_ADD_BLOCKED 显式推送阻断原因和等待指引
+- [x] **state.db Artifact 备份**：Cache + Artifact 双保险，防节假日 Cache 失效导致冷却期/零成本记录丢失
