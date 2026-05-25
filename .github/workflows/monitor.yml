@@ -21,6 +21,13 @@ jobs:
           restore-keys: |
             logs-db-
 
+      - name: Download state DB artifact (cache miss fallback)
+        uses: actions/download-artifact@v4
+        with:
+          name: state-db
+          path: logs/
+        continue-on-error: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -38,3 +45,12 @@ jobs:
           LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
           LARK_APP_ID:       ${{ secrets.LARK_APP_ID }}
           LARK_APP_SECRET:   ${{ secrets.LARK_APP_SECRET }}
+
+      - name: Upload state DB artifact (long-term backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-db
+          path: logs/state.db
+          retention-days: 90
+          overwrite: true
