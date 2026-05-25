@@ -20,6 +20,7 @@ SIGNAL_EMOJI = {
     "ROLL_OUT_BLOCKED":  "🔴",
     "BEAR_ADD":          "🔴",
     "BEAR_ADD_COOLDOWN": "🟠",
+    "BEAR_ADD_BLOCKED":  "🔴",
     "HOLD":              "✅",
 }
 SIGNAL_CN = {
@@ -28,6 +29,7 @@ SIGNAL_CN = {
     "ROLL_OUT_BLOCKED":  "需续杯但现金不足",
     "BEAR_ADD":          "逆势狙击 BEAR ADD",
     "BEAR_ADD_COOLDOWN": "加仓冷却中",
+    "BEAR_ADD_BLOCKED":  "加仓信号被阻断（现金不足）",
     "HOLD":              "持仓观望 HOLD",
 }
 # 所有持仓统一使用无色背景，通过 hr 分隔；信号由卡片内文字图标区分
@@ -179,7 +181,7 @@ class LarkNotifier:
         }
         bear_signals = [
             s for s in signals
-            if s.get("type") in ("BEAR_ADD", "BEAR_ADD_COOLDOWN")
+            if s.get("type") in ("BEAR_ADD", "BEAR_ADD_COOLDOWN", "BEAR_ADD_BLOCKED")
         ]
 
         # ── 标题 & 颜色 ───────────────────────────────────────────────────
@@ -431,6 +433,13 @@ class LarkNotifier:
                 f"建议等待现金回升后再操作，或联系 AI 评估处理方案。"
             ))
 
+        elif sig_type == "BEAR_ADD_BLOCKED":
+            blocks.append(self._div(
+                f"⚠️ **加仓信号触发但现金不足**\n"
+                f"当前持仓 Delta < 0.50，具备逆势加仓条件，但现金低于安全线（< 10% 总资产）。\n"
+                f"等待现金恢复（如 HARVEST 后）再考虑加仓。"
+            ))
+
         return blocks
 
     # ── 资产盘点卡片（手动触发，仅罗列资产，无操作指令）─────────────────────
@@ -640,7 +649,7 @@ def build_card(
             "action_buy":    getattr(r, "action_buy", None),
             "estimated_net": getattr(r, "estimated_net", None),
         }
-        if r.signal_type not in ("BEAR_ADD", "BEAR_ADD_COOLDOWN"):
+        if r.signal_type not in ("BEAR_ADD", "BEAR_ADD_COOLDOWN", "BEAR_ADD_BLOCKED"):
             sig["position_id"] = r.position_id
         signals.append(sig)
 

@@ -259,6 +259,13 @@ def evaluate(pf: PortfolioState, settings: dict,
                 action_buy=buy_adv,
                 estimated_net=-buy_adv["est_cost"],
             ))
+    elif any_low_delta and not cash_ok:
+        results.append(SignalResult(
+            signal_type="BEAR_ADD_BLOCKED",
+            position_id="portfolio",
+            position=pf.positions[0],
+            reason=f"Delta < {settings['delta_bear']}，但现金仓位 {pf.cash_pct:.1%} < {settings['min_cash_pct']:.0%}，加仓被阻断",
+        ))
 
     # ── PASS 4: HOLD（无信号）──────────────────────────
     triggered_ids = {r.position_id for r in results}

@@ -21,7 +21,7 @@ OUTPUT_PNG = ROOT / "charts" / "daily_report.png"
 TMP_HTML   = ROOT / "charts" / "_tmp_card.html"
 
 _WEEKDAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-_SIGNAL_PRIORITY = ["HARVEST", "ROLL_OUT", "BEAR_ADD", "HOLD"]
+_SIGNAL_PRIORITY = ["HARVEST", "ROLL_OUT", "BEAR_ADD", "BEAR_ADD_BLOCKED", "HOLD"]
 
 
 def _b64(path: str) -> str:
@@ -46,16 +46,17 @@ def build_report_data(
             results,
             key=lambda r: _SIGNAL_PRIORITY.index(r.signal_type)
                           if r.signal_type in _SIGNAL_PRIORITY else 99
-        ) if r.signal_type in ("HARVEST", "ROLL_OUT", "BEAR_ADD")),
+        ) if r.signal_type in ("HARVEST", "ROLL_OUT", "BEAR_ADD", "BEAR_ADD_BLOCKED")),
         None,
     )
     signal = action.signal_type if action else "HOLD"
 
     signal_labels = {
-        "HOLD":     "今日无操作",
-        "HARVEST":  "执行收割",
-        "ROLL_OUT": "续杯换期",
-        "BEAR_ADD": "逆势加仓",
+        "HOLD":             "今日无操作",
+        "HARVEST":          "执行收割",
+        "ROLL_OUT":         "续杯换期",
+        "BEAR_ADD":         "逆势加仓",
+        "BEAR_ADD_BLOCKED": "加仓受阻（现金不足）",
     }
 
     total   = pf.total_value
