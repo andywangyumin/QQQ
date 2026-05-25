@@ -67,9 +67,11 @@ function StatusPill({ signal, label }) {
   const map = {
     HOLD:             { bg: '#EFEFEA',   fg: '#3A3A3A', dot: '#7A7A7A' },
     ROLL_OUT:         { bg: T.amberSoft, fg: T.amber,   dot: T.amber   },
+    ROLL_OUT_BLOCKED: { bg: T.redSoft,   fg: T.red,     dot: T.red     },
     HARVEST:          { bg: T.greenSoft, fg: T.green,   dot: T.green   },
     BEAR_ADD:         { bg: T.redSoft,   fg: T.red,     dot: T.red     },
     BEAR_ADD_BLOCKED: { bg: T.amberSoft, fg: T.amber,   dot: T.amber   },
+    BEAR_ADD_COOLDOWN:{ bg: T.amberSoft, fg: T.amber,   dot: T.amber   },
   };
   const s = map[signal] || map.HOLD;
   return (
@@ -232,8 +234,10 @@ function App() {
   const d = REPORT_DATA;
   const qqpUp  = d.qqq.change >= 0;
   const baseUp = d.baselinePnL >= 0;
-  const posRight = d.signal === 'HOLD' ? '无需操作'
-                 : d.signal === 'BEAR_ADD_BLOCKED' ? '⚠ 加仓受阻，等待现金回升'
+  const posRight = d.signal === 'HOLD'             ? '无需操作'
+                 : d.signal === 'ROLL_OUT_BLOCKED'  ? '⚠ 续杯受阻，等待现金回升'
+                 : d.signal === 'BEAR_ADD_BLOCKED'  ? '⚠ 加仓受阻，等待现金回升'
+                 : d.signal === 'BEAR_ADD_COOLDOWN' ? '⏳ 加仓冷却中'
                  : '⚠ 需执行操作';
 
   return (

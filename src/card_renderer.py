@@ -21,7 +21,7 @@ OUTPUT_PNG = ROOT / "charts" / "daily_report.png"
 TMP_HTML   = ROOT / "charts" / "_tmp_card.html"
 
 _WEEKDAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-_SIGNAL_PRIORITY = ["HARVEST", "ROLL_OUT", "BEAR_ADD", "BEAR_ADD_BLOCKED", "HOLD"]
+_SIGNAL_PRIORITY = ["HARVEST", "ROLL_OUT", "ROLL_OUT_BLOCKED", "BEAR_ADD", "BEAR_ADD_BLOCKED", "BEAR_ADD_COOLDOWN", "HOLD"]
 
 
 def _b64(path: str) -> str:
@@ -46,7 +46,8 @@ def build_report_data(
             results,
             key=lambda r: _SIGNAL_PRIORITY.index(r.signal_type)
                           if r.signal_type in _SIGNAL_PRIORITY else 99
-        ) if r.signal_type in ("HARVEST", "ROLL_OUT", "BEAR_ADD", "BEAR_ADD_BLOCKED")),
+        ) if r.signal_type in ("HARVEST", "ROLL_OUT", "ROLL_OUT_BLOCKED",
+                               "BEAR_ADD", "BEAR_ADD_BLOCKED", "BEAR_ADD_COOLDOWN")),
         None,
     )
     signal = action.signal_type if action else "HOLD"
@@ -55,8 +56,10 @@ def build_report_data(
         "HOLD":             "今日无操作",
         "HARVEST":          "执行收割",
         "ROLL_OUT":         "续杯换期",
+        "ROLL_OUT_BLOCKED": "续杯受阻（现金不足）",
         "BEAR_ADD":         "逆势加仓",
         "BEAR_ADD_BLOCKED": "加仓受阻（现金不足）",
+        "BEAR_ADD_COOLDOWN": "加仓冷却中",
     }
 
     total   = pf.total_value
@@ -66,6 +69,9 @@ def build_report_data(
     # 零成本指标
     zc_pct       = min(100.0, harvest_credits / total_option_invested * 100) if total_option_invested > 0 else 0.0
     zc_remaining = max(0.0, total_option_invested - harvest_credits)
+
+    # 现金受阻的持仓 id 集合（用于覆盖备注）
+    roll_out_blocked_ids = {r.position_id for r in results if r.signal_type == "ROLL_OUT_BLOCKED"}
 
     # 持仓列表
     positions = []
@@ -86,7 +92,9 @@ def build_report_data(
             state, state_label = "HOLD", "HOLD"
 
         note = None
-        if getattr(pos, "exempt_rollout", False) and pos.dte < 300:
+        if pos.id in roll_out_blocked_ids:
+            note = "⚠ 需续杯但现金 < 10%，暂无法操作，等待现金回升后执行"
+        elif getattr(pos, "exempt_rollout", False) and pos.dte < 300:
             note = "仅等待 Delta ≥ 0.90 触发 HARVEST"
 
         positions.append({
