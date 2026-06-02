@@ -70,17 +70,29 @@ def _find_closest_expiry(available, target: date) -> Optional[str]:
 
 def fetch_option_iv(strike: float, expiry_str: str,
                     fallback_hv: float = 0.20,
-                    iv_override: Optional[float] = None) -> float:
+                    iv_override: Optional[float] = None,
+                    position_id: Optional[str] = None) -> float:
     """
     获取指定合约的隐含波动率。
-    优先级：iv_override（用户手动填入）> yfinance 期权链 > HV 回退。
+    优先级：iv_override（手动填入）> DB 缓存（iv_refresh 收盘后写入）> yfinance > HV 回退。
     """
     # 1. 用户手动填入的 IV 优先（最准确）
     if iv_override is not None and 0.05 < iv_override < 2.0:
         log.info(f"使用手动 IV：{iv_override:.2%}（strike={strike}, expiry={expiry_str}）")
         return float(iv_override)
 
-    # 2. 尝试从 yfinance 期权链获取
+    # 2. 读取 iv_refresh 写入的收盘后缓存（28小时内有效）
+    if position_id:
+        try:
+            import state_store as ss
+            cached = ss.get_iv_cache(position_id)
+            if cached is not None and 0.05 < cached < 2.0:
+                log.info(f"使用 DB 缓存 IV：{cached:.2%}（{position_id}）")
+                return cached
+        except Exception as e:
+            log.warning(f"读取 IV 缓存失败（{e}），继续尝试 yfinance")
+
+    # 3. 尝试从 yfinance 期权链获取（仅在市场交易时段有效）
     target = datetime.strptime(expiry_str, "%Y-%m-%d").date()
     try:
         ticker = yf.Ticker("QQQ")

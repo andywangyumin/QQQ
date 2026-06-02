@@ -118,6 +118,7 @@ def run(dry_run: bool = False, force: bool = False) -> None:
             expiry_str=pos.expiry.strftime("%Y-%m-%d"),
             fallback_hv=quote["hv20"],
             iv_override=pos.iv_override,
+            position_id=pos.id,
         )
         pos.greeks = compute_greeks(
             S=quote["close"],
@@ -126,10 +127,15 @@ def run(dry_run: bool = False, force: bool = False) -> None:
             r=settings["risk_free_rate"],
             iv=iv,
         )
+        if pos.iv_override:
+            iv_tag = " [手动IV]"
+        elif ss.get_iv_cache(pos.id) is not None:
+            iv_tag = " [DB缓存]"
+        else:
+            iv_tag = ""
         log.info(
             f"  {pos.id}: DTE={pos.dte}  Delta={pos.greeks.delta:.3f}  "
-            f"价格≈${pos.greeks.price:.2f}  IV={iv:.1%}"
-            + (" [手动IV]" if pos.iv_override else "")
+            f"价格≈${pos.greeks.price:.2f}  IV={iv:.1%}{iv_tag}"
         )
 
     # 5. 构建组合状态

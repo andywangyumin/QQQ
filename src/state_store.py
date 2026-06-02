@@ -47,6 +47,13 @@ def init_db() -> None:
                 created_at    TEXT DEFAULT (datetime('now'))
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS option_iv_cache (
+                position_id TEXT PRIMARY KEY,
+                iv          REAL NOT NULL,
+                fetched_at  TEXT NOT NULL
+            )
+        """)
 
 
 # ── 冷却期管理 ─────────────────────────────────────────────
@@ -145,3 +152,44 @@ def get_total_option_invested(initial_cost: float) -> float:
         ).fetchone()
     extra = float(row[0]) if row else 0.0
     return initial_cost + extra
+
+
+# ── IV 缓存（由 iv_refresh.py 写入，main.py 读取）────────────────
+
+def save_iv_cache(position_id: str, iv: float) -> None:
+    """保存一个持仓的 IV（从 iv_refresh.py 调用，每个交易日收盘后更新）"""
+    from datetime import datetime
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO option_iv_cache (position_id, iv, fetched_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(position_id) DO UPDATE SET iv=excluded.iv, fetched_at=excluded.fetched_at""",
+            (position_id, iv, now)
+        )
+    log.info(f"IV 缓存更新：{position_id}  IV={iv:.2%}  时间={now}")
+
+
+def get_iv_cache(position_id: str, max_age_hours: int = 28) -> Optional[float]:
+    """
+    读取缓存的 IV。若缓存不存在或超过 max_age_hours 小时则返回 None。
+    28小时宽限：允许周末/节假日的日报使用上一个交易日的 IV。
+    """
+    from datetime import datetime, timedelta
+    with _conn() as c:
+        row = c.execute(
+            "SELECT iv, fetched_at FROM option_iv_cache WHERE position_id=?",
+            (position_id,)
+        ).fetchone()
+    if row is None:
+        return None
+    iv, fetched_at_str = row
+    try:
+        fetched_at = datetime.strptime(fetched_at_str, "%Y-%m-%dT%H:%M:%SZ")
+        age_hours = (datetime.utcnow() - fetched_at).total_seconds() / 3600
+        if age_hours > max_age_hours:
+            log.warning(f"IV 缓存过期：{position_id}  缓存时间={fetched_at_str}  已过 {age_hours:.1f}h")
+            return None
+    except ValueError:
+        return None
+    return float(iv)
