@@ -54,6 +54,10 @@ class PortfolioState:
     qqq_close: float
     qqq_change_pct: float
     quote_date: date
+    # BS锚点：基准日期权的BS估值，用于修正IV溢价误差
+    # corrected_total = baseline + (current_BS_options - bs_anchor_options)
+    baseline: float = 0.0
+    bs_anchor_options: float = 0.0
 
     @property
     def options_value(self) -> float:
@@ -61,11 +65,14 @@ class PortfolioState:
 
     @property
     def total_value(self) -> float:
+        """修正后总资产：基线 + BS期权涨幅，确保第一天 = baseline"""
+        if self.baseline > 0 and self.bs_anchor_options > 0:
+            return self.baseline + (self.options_value - self.bs_anchor_options)
         return self.cash + self.options_value
 
     @property
     def cash_pct(self) -> float:
-        tv = self.total_value
+        tv = self.cash + self.options_value  # 操作决策用未修正值，保持真实现金比例
         return self.cash / tv if tv > 0 else 0.0
 
 

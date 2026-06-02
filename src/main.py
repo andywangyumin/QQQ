@@ -129,12 +129,15 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         )
 
     # 5. 构建组合状态
+    bs_anchor_options = float(pos_raw["portfolio"].get("bs_anchor_options", 0.0))
     pf = PortfolioState(
         positions=positions,
         cash=cash,
         qqq_close=quote["close"],
         qqq_change_pct=quote["change_pct"],
         quote_date=quote["date"],
+        baseline=baseline,
+        bs_anchor_options=bs_anchor_options,
     )
     log.info(f"组合总值：${pf.total_value:,.0f}  现金占比：{pf.cash_pct:.1%}")
 
