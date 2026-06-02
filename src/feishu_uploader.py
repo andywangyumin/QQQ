@@ -38,7 +38,7 @@ def upload_chart(image_path: str, app_id: str, app_secret: str) -> Optional[str]
     凭证未配置或上传失败时返回 None（主流程继续，跳过图片）。
     """
     if not app_id or not app_secret:
-        log.debug("LARK_APP_ID / LARK_APP_SECRET 未配置，跳过图片上传")
+        log.warning("LARK_APP_ID / LARK_APP_SECRET 未配置，无法上传图片，将降级为文字卡片")
         return None
     try:
         token = _get_tenant_token(app_id, app_secret)

@@ -2,7 +2,7 @@ name: QQQ LEAPS Monitor
 
 on:
   schedule:
-    - cron: '0 10 * * 1-5'   # UTC 10:00 = 北京时间 18:00，周一至周五
+    - cron: '0 9 * * 1-5'    # UTC 09:00 = 北京时间 17:00，提前1小时触发以抵消 GitHub Actions 队列延迟
   workflow_dispatch:           # 允许手动触发（测试用）
 
 jobs:
@@ -12,6 +12,33 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
+
+      - name: Install Playwright Chromium
+        run: playwright install chromium --with-deps
 
       - name: Restore logs DB (state + market history)
         uses: actions/cache@v4
@@ -27,17 +54,6 @@ jobs:
           name: state-db
           path: logs/
         continue-on-error: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install Playwright Chromium
-        run: playwright install chromium --with-deps
 
       - name: Run monitor
         run: python src/main.py

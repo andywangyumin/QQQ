@@ -177,6 +177,7 @@ def run(dry_run: bool = False, force: bool = False) -> None:
     if not dry_run:
         app_id     = os.environ.get("LARK_APP_ID", "")
         app_secret = os.environ.get("LARK_APP_SECRET", "")
+        log.info(f"图片推送凭证：LARK_APP_ID={'已配置' if app_id else '未配置'}  LARK_APP_SECRET={'已配置' if app_secret else '未配置'}")
         try:
             from chart_generator import generate_trend_chart
             from feishu_uploader  import upload_chart
