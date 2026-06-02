@@ -21,6 +21,7 @@ class Position:
     entry_date: date
     note: str = ""
     exempt_rollout: bool = False  # True = 豁免续杯，仅 HARVEST 触发
+    iv_override: Optional[float] = None  # moomoo 实际 IV，优先于 yfinance/HV
     # 由 signal engine 填充
     greeks: Optional[OptionGreeks] = None
 

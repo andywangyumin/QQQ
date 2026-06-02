@@ -9,6 +9,7 @@ positions:
     quantity: 1
     cost_per_share: 63.00
     entry_date: "2026-05-23"
+    iv_override: 0.3023         # moomoo 实际隐含波动率（2026-06-01），每次查看后手动更新
     exempt_rollout: true        # 豁免续杯：DTE<300 不触发 ROLL_OUT，仅 Delta>=0.90 触发 HARVEST
     note: "初始建仓"
 
@@ -18,6 +19,7 @@ positions:
     quantity: 1
     cost_per_share: 64.29
     entry_date: "2026-05-23"
+    iv_override: 0.2969         # moomoo 实际隐含波动率（2026-06-01），每次查看后手动更新
     exempt_rollout: true        # 豁免续杯：DTE<300 不触发 ROLL_OUT，仅 Delta>=0.90 触发 HARVEST
     note: "初始建仓"
 
@@ -27,6 +29,7 @@ positions:
     quantity: 1
     cost_per_share: 76.23
     entry_date: "2026-05-23"
+    iv_override: 0.2564         # moomoo 实际隐含波动率（2026-06-01），每次查看后手动更新
     note: "初始建仓"
 
 # 现金仓位（美元）：每次操作后手动更新
@@ -34,7 +37,7 @@ positions:
 portfolio:
   cash: 66305.0
   baseline: 100000.0         # 基准总资产（2026-05-24，实际账户价值）
-  bs_anchor_options: 28145.0 # 基准日期权的BS估值（QQQ=717.54）；总资产 = baseline + (今日BS - 此锚点）
+  bs_anchor_options: 34064.0 # 基准日期权的BS估值（QQQ=717.54，实际IV）；总资产 = baseline + (今日BS - 此锚点）
                              # 每次换仓（HARVEST/ROLL_OUT/BEAR_ADD）后需重新计算并更新此值
   initial_option_cost: 20352.0  # 北极星指标分母：初始期权建仓成本（63×100 + 64.29×100 + 76.23×100）
   note: "2026-05-24 设定基准。BS锚点法：用BS涨幅追踪收益，消除IV溢价对绝对值的影响"

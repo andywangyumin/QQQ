@@ -69,12 +69,18 @@ def _find_closest_expiry(available, target: date) -> Optional[str]:
 
 
 def fetch_option_iv(strike: float, expiry_str: str,
-                    fallback_hv: float = 0.20) -> float:
+                    fallback_hv: float = 0.20,
+                    iv_override: Optional[float] = None) -> float:
     """
-    从 yfinance 期权链获取指定行权价附近的隐含波动率。
-    yfinance IV 与 HV20 加权混合（7:3），缓解 yfinance 远月 IV 偏高问题。
-    若找不到，回退到历史波动率 fallback_hv。
+    获取指定合约的隐含波动率。
+    优先级：iv_override（用户手动填入）> yfinance 期权链 > HV 回退。
     """
+    # 1. 用户手动填入的 IV 优先（最准确）
+    if iv_override is not None and 0.05 < iv_override < 2.0:
+        log.info(f"使用手动 IV：{iv_override:.2%}（strike={strike}, expiry={expiry_str}）")
+        return float(iv_override)
+
+    # 2. 尝试从 yfinance 期权链获取
     target = datetime.strptime(expiry_str, "%Y-%m-%d").date()
     try:
         ticker = yf.Ticker("QQQ")
@@ -90,19 +96,16 @@ def fetch_option_iv(strike: float, expiry_str: str,
         if calls.empty:
             return fallback_hv
 
-        # 取最近行权价的 IV，同时取周边 ±2 档均值，降低单点噪声
         sorted_calls = calls.iloc[(calls["strike"] - strike).abs().argsort()]
         iv_sample = sorted_calls["impliedVolatility"].head(3).values
         iv_raw = float(np.median(iv_sample))
 
         if iv_raw <= 0.01 or iv_raw > 2.0:
-            log.warning(f"IV={iv_raw:.3f} 异常，回退到 HV")
+            log.warning(f"yfinance IV={iv_raw:.3f} 异常，使用 HV 回退（建议在 positions.yaml 填写 iv_override）")
             return fallback_hv
 
-        # yfinance 远月 IV 系统性偏高，与 HV20 加权混合（7:3）校正
-        iv_blended = 0.70 * iv_raw + 0.30 * fallback_hv
-        iv_final   = float(np.clip(iv_blended, 0.10, 0.80))
-        log.debug(f"IV 校正：yfinance={iv_raw:.3f}  HV20={fallback_hv:.3f}  混合={iv_final:.3f}")
+        iv_final = float(np.clip(iv_raw, 0.10, 0.80))
+        log.info(f"yfinance IV：{iv_final:.2%}（strike={strike}, expiry={expiry_str}）")
         return iv_final
 
     except Exception as e:

@@ -65,6 +65,7 @@ def build_positions(pos_raw: dict) -> tuple[list[Position], float, float]:
     for p in pos_raw["positions"]:
         expiry = date.fromisoformat(p["expiry"])
         entry  = date.fromisoformat(p["entry_date"])
+        iv_ov  = p.get("iv_override")
         positions.append(Position(
             id=p["id"],
             strike=float(p["strike"]),
@@ -74,6 +75,7 @@ def build_positions(pos_raw: dict) -> tuple[list[Position], float, float]:
             entry_date=entry,
             note=p.get("note", ""),
             exempt_rollout=bool(p.get("exempt_rollout", False)),
+            iv_override=float(iv_ov) if iv_ov is not None else None,
         ))
     cash     = float(pos_raw["portfolio"]["cash"])
     baseline = float(pos_raw["portfolio"].get("baseline", cash))
@@ -115,6 +117,7 @@ def run(dry_run: bool = False, force: bool = False) -> None:
             strike=pos.strike,
             expiry_str=pos.expiry.strftime("%Y-%m-%d"),
             fallback_hv=quote["hv20"],
+            iv_override=pos.iv_override,
         )
         pos.greeks = compute_greeks(
             S=quote["close"],
@@ -126,6 +129,7 @@ def run(dry_run: bool = False, force: bool = False) -> None:
         log.info(
             f"  {pos.id}: DTE={pos.dte}  Delta={pos.greeks.delta:.3f}  "
             f"价格≈${pos.greeks.price:.2f}  IV={iv:.1%}"
+            + (" [手动IV]" if pos.iv_override else "")
         )
 
     # 5. 构建组合状态
