@@ -1,11 +1,12 @@
-name: QQQ LEAPS Monitor — Prepare
+name: QQQ LEAPS Monitor
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'   # UTC 09:00 = 北京时间 17:00，尽早拉数据 + 渲染图片，存入 DB
-  workflow_dispatch:           # 允许手动触发（测试用）
+    - cron: '0 9 * * 1-5'   # UTC 09:00 = 北京 17:00 触发；prepare 完成后 notify job 等待至 UTC 10:00（北京 18:00）推送
+  workflow_dispatch:           # 手动触发时跳过等待，立即推送
 
 jobs:
+  # ── Job 1: 尽早准备好报告 ──────────────────────────────────
   prepare:
     runs-on: ubuntu-latest
 
@@ -23,8 +24,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
+          restore-keys: pip-${{ runner.os }}-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -34,21 +34,12 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
+          restore-keys: playwright-chromium-${{ runner.os }}-
 
       - name: Install Playwright Chromium
         run: playwright install chromium --with-deps
 
-      - name: Restore state DB
-        uses: actions/cache@v4
-        with:
-          path: logs/
-          key: logs-db-${{ github.run_id }}
-          restore-keys: |
-            logs-db-
-
-      - name: Download state DB artifact (cache miss fallback)
+      - name: Download state DB artifact (long-term backup)
         uses: actions/download-artifact@v4
         with:
           name: state-db-v2
@@ -61,7 +52,63 @@ jobs:
           LARK_APP_ID:     ${{ secrets.LARK_APP_ID }}
           LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
 
-      - name: Upload state DB artifact
+      - name: Upload state DB for notify job (same-run artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-db-daily
+          path: logs/state.db
+          retention-days: 1
+
+  # ── Job 2: 等到 18:00 再推送 ───────────────────────────────
+  notify:
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Wait until UTC 10:00 (北京 18:00)
+        if: github.event_name == 'schedule'
+        run: |
+          TARGET=$(date -u -d 'today 10:00:00' +%s)
+          NOW=$(date -u +%s)
+          DIFF=$((TARGET - NOW))
+          if [ $DIFF -gt 0 ]; then
+            echo "Sleeping ${DIFF}s until UTC 10:00 (Beijing 18:00)..."
+            sleep $DIFF
+          else
+            echo "Already past UTC 10:00 (diff=${DIFF}s), sending now"
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download state DB from prepare job
+        uses: actions/download-artifact@v4
+        with:
+          name: state-db-daily
+          path: logs/
+
+      - name: Send notification
+        run: python src/main.py --notify
+        env:
+          LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
+          LARK_SECRET:       ${{ secrets.LARK_SECRET }}
+
+      - name: Upload state DB artifact (long-term backup)
         if: always()
         uses: actions/upload-artifact@v4
         with:
