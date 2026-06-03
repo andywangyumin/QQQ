@@ -1,12 +1,12 @@
-name: QQQ LEAPS Monitor — Prepare
+name: QQQ LEAPS Monitor — Notify
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'   # UTC 09:00 = 北京时间 17:00，尽早拉数据 + 渲染图片，存入 DB
-  workflow_dispatch:           # 允许手动触发（测试用）
+    - cron: '0 10 * * 1-5'  # UTC 10:00 = 北京时间 18:00，从 DB 读取已准备卡片 → 推送飞书
+  workflow_dispatch:           # 允许手动触发
 
 jobs:
-  prepare:
+  notify:
     runs-on: ubuntu-latest
 
     steps:
@@ -29,17 +29,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
-
-      - name: Install Playwright Chromium
-        run: playwright install chromium --with-deps
-
       - name: Restore state DB
         uses: actions/cache@v4
         with:
@@ -48,20 +37,20 @@ jobs:
           restore-keys: |
             logs-db-
 
-      - name: Download state DB artifact (cache miss fallback)
+      - name: Download state DB artifact (contains today's prepared card)
         uses: actions/download-artifact@v4
         with:
           name: state-db-v2
           path: logs/
         continue-on-error: true
 
-      - name: Prepare report (fetch data + render image → save to DB)
-        run: python src/main.py --prepare
+      - name: Send notification
+        run: python src/main.py --notify
         env:
-          LARK_APP_ID:     ${{ secrets.LARK_APP_ID }}
-          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
+          LARK_SECRET:       ${{ secrets.LARK_SECRET }}
 
-      - name: Upload state DB artifact
+      - name: Upload state DB artifact (updated with sent log)
         if: always()
         uses: actions/upload-artifact@v4
         with:

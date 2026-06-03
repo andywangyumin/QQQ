@@ -54,6 +54,16 @@ def init_db() -> None:
                 fetched_at  TEXT NOT NULL
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily_card (
+                card_date         TEXT PRIMARY KEY,
+                card_json         TEXT NOT NULL,
+                signals_json      TEXT NOT NULL,
+                all_hold          INTEGER NOT NULL DEFAULT 0,
+                send_daily_report INTEGER NOT NULL DEFAULT 1,
+                created_at        TEXT DEFAULT (datetime('now'))
+            )
+        """)
 
 
 # ── 冷却期管理 ─────────────────────────────────────────────
@@ -155,6 +165,46 @@ def get_total_option_invested(initial_cost: float) -> float:
 
 
 # ── IV 缓存（由 iv_refresh.py 写入，main.py 读取）────────────────
+
+def save_daily_card(card: dict, signals: list, all_hold: bool, send_daily_report: bool) -> None:
+    """保存今日已准备好的卡片，供 --notify 步骤发送"""
+    import json
+    today = date.today().isoformat()
+    with _conn() as c:
+        c.execute("""
+            INSERT INTO daily_card (card_date, card_json, signals_json, all_hold, send_daily_report)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(card_date) DO UPDATE SET
+                card_json=excluded.card_json,
+                signals_json=excluded.signals_json,
+                all_hold=excluded.all_hold,
+                send_daily_report=excluded.send_daily_report,
+                created_at=datetime('now')
+        """, (today, json.dumps(card, ensure_ascii=False),
+              json.dumps(signals, ensure_ascii=False),
+              1 if all_hold else 0, 1 if send_daily_report else 0))
+    log.info(f"日报卡片已存入 DB：{today}  all_hold={all_hold}")
+
+
+def load_daily_card(card_date: Optional[str] = None) -> Optional[dict]:
+    """读取指定日期（默认今天）的已准备卡片，不存在返回 None"""
+    import json
+    if card_date is None:
+        card_date = date.today().isoformat()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT card_json, signals_json, all_hold, send_daily_report FROM daily_card WHERE card_date=?",
+            (card_date,)
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "card":              json.loads(row[0]),
+        "signals":           json.loads(row[1]),
+        "all_hold":          bool(row[2]),
+        "send_daily_report": bool(row[3]),
+    }
+
 
 def save_iv_cache(position_id: str, iv: float) -> None:
     """保存一个持仓的 IV（从 iv_refresh.py 调用，每个交易日收盘后更新）"""
