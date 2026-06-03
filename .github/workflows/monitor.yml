@@ -2,7 +2,7 @@ name: QQQ LEAPS Monitor
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'    # UTC 09:00 = 北京时间 17:00，提前1小时触发以抵消 GitHub Actions 队列延迟
+    - cron: '45 9 * * 1-5'   # UTC 09:45 = 北京时间 17:45，加上队列+安装时间约5~15分钟，预计18:00前后落地
   workflow_dispatch:           # 允许手动触发（测试用）
 
 jobs:
