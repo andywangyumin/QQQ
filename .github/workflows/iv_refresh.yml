@@ -40,7 +40,7 @@ jobs:
       - name: Download state DB artifact (cache miss fallback)
         uses: actions/download-artifact@v4
         with:
-          name: state-db
+          name: state-db-v2
           path: logs/
         continue-on-error: true
 
@@ -51,7 +51,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: state-db
+          name: state-db-v2
           path: logs/state.db
           retention-days: 90
           overwrite: true

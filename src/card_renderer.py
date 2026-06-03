@@ -63,7 +63,7 @@ def build_report_data(
     }
 
     total   = pf.total_value
-    opt_val = total - pf.cash
+    opt_val = pf.options_value   # BS 估值，不受锚点修正影响
     pnl     = total - baseline
 
     # 零成本指标
@@ -160,7 +160,7 @@ def render_card(report_data: dict, output_path: Optional[str] = None) -> str:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = p.chromium.launch(args=["--no-sandbox", "--disable-setuid-sandbox"])
             page = browser.new_page(viewport={"width": 700, "height": 2400})
             page.goto(f"file://{TMP_HTML.resolve()}")
             page.wait_for_load_state("networkidle")
