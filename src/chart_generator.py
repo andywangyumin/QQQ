@@ -47,14 +47,30 @@ OP_STYLE = {
 
 
 def _load_6m_prices() -> pd.DataFrame:
-    """Return last 6 months of QQQ daily close from history_store.db."""
+    """Return last 6 months of QQQ daily close from history_store.db.
+    Auto-backfills from yfinance when DB has insufficient data (e.g. fresh container)."""
+    import yfinance as yf
     import history_store as hs
+
+    cutoff = pd.Timestamp(date.today() - timedelta(days=183))
     df = hs.load_df()
+
+    if df.empty or len(df[df.index >= cutoff]) < 30:
+        log.info("history_store 数据不足，从 yfinance 回填近 6 个月历史数据...")
+        try:
+            raw = yf.download("QQQ", period="6mo", auto_adjust=True, progress=False)
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.droplevel(1)
+            if not raw.empty:
+                hs.upsert_df(raw)
+                df = hs.load_df()
+                log.info(f"回填完成，共 {len(df)} 条记录")
+        except Exception as e:
+            log.warning(f"yfinance 回填失败：{e}")
+
     if df.empty:
         return df
-    cutoff = pd.Timestamp(date.today() - timedelta(days=183))
-    mask = df.index >= cutoff
-    return df.loc[mask].copy()
+    return df.loc[df.index >= cutoff].copy()
 
 
 def _load_operations() -> list:
