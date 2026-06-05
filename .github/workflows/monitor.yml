@@ -2,13 +2,13 @@ name: QQQ LEAPS Monitor
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'   # UTC 09:00 = 北京 17:00 触发；prepare 完成后 notify job 等待至 UTC 10:00（北京 18:00）推送
-  workflow_dispatch:           # 手动触发时跳过等待，立即推送
+    - cron: '0 9 * * 1-5'   # UTC 09:00 = 北京 17:00 启动；prepare 完成后等待至 UTC 10:00（北京 18:00）推送
+  workflow_dispatch:           # 手动触发：跳过等待，立即推送
 
 jobs:
-  # ── Job 1: 尽早准备好报告 ──────────────────────────────────
-  prepare:
+  monitor:
     runs-on: ubuntu-latest
+    timeout-minutes: 120       # 最长2小时（prepare ~5min + sleep ~55min + notify ~2min）
 
     steps:
       - name: Checkout code
@@ -39,76 +39,43 @@ jobs:
       - name: Install Playwright Chromium
         run: playwright install chromium --with-deps
 
-      - name: Download state DB artifact (long-term backup)
+      - name: Download state DB artifact
         uses: actions/download-artifact@v4
         with:
           name: state-db-v2
           path: logs/
         continue-on-error: true
 
-      - name: Prepare report (fetch data + render image → save to DB)
+      # ── Phase 1: 拉数据 + 渲染图片 + 存入 DB ────────────────
+      - name: Prepare report
         run: python src/main.py --prepare
         env:
           LARK_APP_ID:     ${{ secrets.LARK_APP_ID }}
           LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
 
-      - name: Upload state DB for notify job (same-run artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: state-db-daily
-          path: logs/state.db
-          retention-days: 1
-
-  # ── Job 2: 等到 18:00 再推送 ───────────────────────────────
-  notify:
-    needs: prepare
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Wait until UTC 10:00 (北京 18:00)
+      # ── 等待至北京 18:00（UTC 10:00），手动触发时跳过 ─────────
+      - name: Wait until UTC 10:00 (Beijing 18:00)
         if: github.event_name == 'schedule'
         run: |
           TARGET=$(date -u -d 'today 10:00:00' +%s)
           NOW=$(date -u +%s)
           DIFF=$((TARGET - NOW))
-          if [ $DIFF -gt 0 ]; then
+          if [ "$DIFF" -gt 0 ]; then
             echo "Sleeping ${DIFF}s until UTC 10:00 (Beijing 18:00)..."
-            sleep $DIFF
+            sleep "$DIFF"
           else
-            echo "Already past UTC 10:00 (diff=${DIFF}s), sending now"
+            echo "Already past UTC 10:00 (diff=${DIFF}s), sending immediately"
           fi
 
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download state DB from prepare job
-        uses: actions/download-artifact@v4
-        with:
-          name: state-db-daily
-          path: logs/
-
+      # ── Phase 2: 从 DB 读卡片 → 推送飞书 ────────────────────
       - name: Send notification
         run: python src/main.py --notify
         env:
           LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
           LARK_SECRET:       ${{ secrets.LARK_SECRET }}
 
-      - name: Upload state DB artifact (long-term backup)
+      # ── 备份 state DB（无论成功失败都执行）────────────────────
+      - name: Upload state DB artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:

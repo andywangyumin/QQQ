@@ -220,7 +220,11 @@ def phase_notify(force: bool = False) -> None:
 
     loaded = ss.load_daily_card()
     if loaded is None:
-        log.error("未找到今日已准备的卡片，请先运行 --prepare")
+        log.warning("未找到今日已准备的卡片，尝试立即重新准备...")
+        phase_prepare()
+        loaded = ss.load_daily_card()
+    if loaded is None:
+        log.error("prepare 后仍无卡片，退出")
         sys.exit(1)
 
     card              = loaded["card"]
