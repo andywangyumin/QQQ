@@ -32,12 +32,21 @@ positions:
     iv_override: 0.2564         # moomoo 实际隐含波动率（2026-06-01），每次查看后手动更新
     note: "初始建仓"
 
+  - id: "QQQ_270331_730C"
+    strike: 730.0
+    expiry: "2027-03-31"
+    quantity: 1
+    cost_per_share: 84.69
+    entry_date: "2026-06-04"
+    iv_override: 0.2576         # moomoo 实际隐含波动率（2026-06-04，买入当日截图）
+    note: "追加建仓"
+
 # 现金仓位（美元）：每次操作后手动更新
 # 用于计算 cash_pct 和判断 BEAR ADD 模式
 portfolio:
-  cash: 66305.0
-  baseline: 100000.0         # 基准总资产（2026-05-24，实际账户价值）
-  bs_anchor_options: 34064.0 # 基准日期权的BS估值（QQQ=717.54，实际IV）；总资产 = baseline + (今日BS - 此锚点）
-                             # 每次换仓（HARVEST/ROLL_OUT/BEAR_ADD）后需重新计算并更新此值
-  initial_option_cost: 20352.0  # 北极星指标分母：初始期权建仓成本（63×100 + 64.29×100 + 76.23×100）
-  note: "2026-05-24 设定基准。BS锚点法：用BS涨幅追踪收益，消除IV溢价对绝对值的影响"
+  cash: 57836.0               # 66305 - 8469（730C 买入成本 84.69×100）
+  baseline: 100000.0          # 基准总资产（2026-05-24，实际账户价值）
+  bs_anchor_options: 42533.0  # 34064 + 8469（730C 买入时按买入价计入锚点，确保买入当日不计盈亏）
+                              # 每次换仓（HARVEST/ROLL_OUT/BEAR_ADD）后需重新计算并更新此值
+  initial_option_cost: 28821.0  # 北极星指标分母：20352 + 8469（730C 追加成本）
+  note: "2026-05-24 设定基准，2026-06-04 追加 730C。BS锚点法：用BS涨幅追踪收益，消除IV溢价对绝对值的影响"
