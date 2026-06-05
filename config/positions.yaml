@@ -39,6 +39,7 @@ positions:
     cost_per_share: 79.40
     entry_date: "2026-06-04"
     iv_override: 0.2576         # moomoo 实际隐含波动率（2026-06-04，买入当日截图）
+    exempt_rollout: true        # 买入时 DTE=299 已低于阈值，豁免续杯，仅等待 Delta ≥ 0.90 触发 HARVEST
     note: "追加建仓"
 
 # 现金仓位（美元）：每次操作后手动更新
