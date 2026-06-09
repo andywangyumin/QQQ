@@ -40,14 +40,24 @@ positions:
     entry_date: "2026-06-04"
     iv_override: 0.2576         # moomoo 实际隐含波动率（2026-06-04，买入当日截图）
     exempt_rollout: true        # 买入时 DTE=299 已低于阈值，豁免续杯，仅等待 Delta ≥ 0.90 触发 HARVEST
-    note: "追加建仓"
+    note: "追加建仓（第1张）"
+
+  - id: "QQQ_270331_730C_2"
+    strike: 730.0
+    expiry: "2027-03-31"
+    quantity: 1
+    cost_per_share: 63.29
+    entry_date: "2026-06-05"
+    iv_override: 0.2512         # moomoo 实际隐含波动率（2026-06-05，买入当日截图）
+    exempt_rollout: true        # 买入时 DTE=295 已低于阈值，豁免续杯，仅等待 Delta ≥ 0.90 触发 HARVEST
+    note: "追加建仓（第2张，730C）"
 
 # 现金仓位（美元）：每次操作后手动更新
 # 用于计算 cash_pct 和判断 BEAR ADD 模式
 portfolio:
-  cash: 58365.0               # 66305 - 7940（730C 买入成本 79.40×100）
+  cash: 52036.0               # 58365 - 6329（730C 第2张买入成本 63.29×100）
   baseline: 100000.0          # 基准总资产（2026-05-24，实际账户价值）
-  bs_anchor_options: 42004.0  # 34064 + 7940（730C 买入时按成交价计入锚点，确保买入当日不计盈亏）
+  bs_anchor_options: 48333.0  # 42004 + 6329（730C_2 买入时按成交价计入锚点，确保买入当日不计盈亏）
                               # 每次换仓（HARVEST/ROLL_OUT/BEAR_ADD）后需重新计算并更新此值
-  initial_option_cost: 28292.0  # 北极星指标分母：20352 + 7940（730C 追加成本）
-  note: "2026-05-24 设定基准，2026-06-04 追加 730C。BS锚点法：用BS涨幅追踪收益，消除IV溢价对绝对值的影响"
+  initial_option_cost: 34621.0  # 北极星指标分母：28292 + 6329（730C_2 追加成本）
+  note: "2026-05-24 设定基准，2026-06-04 追加 730C，2026-06-05 再追加 730C_2。BS锚点法：用BS涨幅追踪收益，消除IV溢价对绝对值的影响"
