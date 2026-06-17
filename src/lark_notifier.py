@@ -695,3 +695,70 @@ def build_image_card(img_key: str) -> dict:
 def send(webhook_url: str, card: dict, secret: Optional[str] = None) -> bool:
     """模块级发送函数，保持向后兼容"""
     return LarkNotifier(webhook_url, secret).send(card)
+
+
+def build_intraday_alert_card(
+    qqq_price: float,
+    change_pct: float,
+    positions_hit: List[Dict],
+    action_buy: Optional[Dict] = None,
+) -> dict:
+    """
+    盘中实时 BEAR_ADD 预警卡片（轻量文字格式，无需 Playwright/图片）。
+
+    positions_hit: [{id, delta, strike, expiry}, ...]
+    action_buy:    signal_engine 生成的 action_buy dict
+    """
+    n = LarkNotifier("_dummy_")
+    elements: list = []
+
+    # QQQ 行情行
+    chg_color = "red" if change_pct < 0 else "green"
+    arrow = "📉" if change_pct < 0 else "📈"
+    elements.append(n._column_set([
+        n._wcol(1, f"**QQQ 当前价**　　**${qqq_price:.2f}**"),
+        n._wcol(1, f"{arrow} 较前日 　<font color='{chg_color}'>**{change_pct:+.2%}**</font>"),
+    ]))
+    elements.append(n._hr())
+
+    # 信号说明
+    elements.append(n._div(
+        "**🔴 BEAR ADD 信号触发 — 持仓 Delta 低于阈值**\n"
+        "当前任意合约 Delta < 0.50，满足逆势加仓条件。"
+    ))
+
+    # 触发持仓列表
+    pos_lines = "\n".join(
+        f"  · **{p['id']}**　Delta {p['delta']:.3f}　行权价 ${p['strike']:.0f}　到期 {p['expiry']}"
+        for p in positions_hit
+    )
+    elements.append(n._div(f"**触发持仓：**\n{pos_lines}"))
+
+    # 操作建议
+    if action_buy:
+        mode_cn = "重炮" if "重炮" in action_buy.get("mode", "") else "标准"
+        elements.append(n._hr())
+        elements.append(n._div(
+            f"**操作建议（{mode_cn}模式）**\n"
+            f"买入　QQQ Call **${action_buy['strike']:.0f}**　{action_buy['expiry']}"
+            f"（+{action_buy['target_dte']}天）　×**{action_buy['quantity']}**张\n"
+            f"参考买价 ≈ **${action_buy['est_ask']:.2f}**"
+            f"　预估成本约 **${action_buy.get('est_cost', 0):,.0f}**"
+        ))
+
+    elements.append(n._hr())
+    elements.append(n._note(
+        "盘中实时信号 · 数据约延迟5-15分钟 · moomoo 以限价单执行 · 执行后告知 AI 进入30天冷却期"
+    ))
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title":    n._text(f"🔴 BEAR ADD 盘中预警 | QQQ ${qqq_price:.2f}"),
+                "template": "red",
+            },
+            "elements": elements,
+        },
+    }

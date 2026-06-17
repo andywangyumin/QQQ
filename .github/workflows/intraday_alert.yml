@@ -1,0 +1,51 @@
+name: QQQ 盘中预警
+
+on:
+  schedule:
+    - cron: '*/15 13-21 * * 1-5'  # 美东 09:00-17:00，每15分钟（UTC 13:00-21:00）
+  workflow_dispatch:                # 手动触发，用于测试
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download state DB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: state-db-v2
+          path: logs/
+        continue-on-error: true   # 首次运行或 artifact 过期时正常失败
+
+      - name: Run intraday check
+        run: python src/intraday_check.py
+        env:
+          LARK_WEBHOOK_URLS: ${{ secrets.LARK_WEBHOOK_URLS }}
+
+      - name: Upload state DB artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-db-v2
+          path: logs/state.db
+          retention-days: 90
+          overwrite: true

@@ -64,6 +64,16 @@ def init_db() -> None:
                 created_at        TEXT DEFAULT (datetime('now'))
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS intraday_alert_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_date  TEXT NOT NULL,
+                alert_time  TEXT NOT NULL,
+                qqq_price   REAL NOT NULL,
+                signal_type TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
 
 
 # ── 冷却期管理 ─────────────────────────────────────────────
@@ -218,6 +228,34 @@ def save_iv_cache(position_id: str, iv: float) -> None:
             (position_id, iv, now)
         )
     log.info(f"IV 缓存更新：{position_id}  IV={iv:.2%}  时间={now}")
+
+
+def get_last_intraday_alert(today: date) -> Optional[dict]:
+    """返回今日最近一次盘中预警记录，不存在返回 None"""
+    with _conn() as c:
+        row = c.execute(
+            """SELECT alert_time, qqq_price, signal_type
+               FROM intraday_alert_log
+               WHERE alert_date=?
+               ORDER BY id DESC LIMIT 1""",
+            (today.isoformat(),)
+        ).fetchone()
+    if row is None:
+        return None
+    return {"alert_time": row[0], "qqq_price": row[1], "signal_type": row[2]}
+
+
+def record_intraday_alert(today: date, qqq_price: float, signal_type: str) -> None:
+    """记录一次盘中预警"""
+    from datetime import datetime as _dt
+    now_str = _dt.utcnow().strftime("%H:%M:%S")
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO intraday_alert_log (alert_date, alert_time, qqq_price, signal_type)
+               VALUES (?, ?, ?, ?)""",
+            (today.isoformat(), now_str, qqq_price, signal_type)
+        )
+    log.info(f"记录盘中预警：{signal_type}  QQQ={qqq_price:.2f}  UTC={now_str}")
 
 
 def get_iv_cache(position_id: str, max_age_hours: int = 28) -> Optional[float]:
