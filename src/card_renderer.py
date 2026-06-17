@@ -158,17 +158,23 @@ def render_card(report_data: dict, output_path: Optional[str] = None) -> str:
     TMP_HTML.parent.mkdir(parents=True, exist_ok=True)
     TMP_HTML.write_text(html, encoding="utf-8")
 
+    js_errors = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(args=["--no-sandbox", "--disable-setuid-sandbox"])
             page = browser.new_page(viewport={"width": 700, "height": 2400})
-            page.goto(f"file://{TMP_HTML.resolve()}")
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(1200)   # 等待字体 + Babel JSX 编译完成
+            page.on("pageerror", lambda e: js_errors.append(str(e)))
+            page.goto(f"file://{TMP_HTML.resolve()}", timeout=60000)
+            page.wait_for_load_state("networkidle", timeout=60000)
+            page.wait_for_timeout(2000)   # 等待字体 + Babel JSX 编译完成
+            if js_errors:
+                log.warning(f"JS 错误：{js_errors}")
             card = page.locator("#card-root > div").first
-            card.screenshot(path=str(out))
+            card.screenshot(path=str(out), timeout=60000)
             browser.close()
     finally:
+        if js_errors:
+            log.warning(f"渲染期间发生 {len(js_errors)} 个 JS 错误")
         TMP_HTML.unlink(missing_ok=True)
 
     log.info(f"日报图片已渲染：{out}")

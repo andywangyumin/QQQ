@@ -18,7 +18,7 @@
 
 <script>const REPORT_DATA = "__REPORT_DATA__";</script>
 
-<script type="text/babel">
+<script id="jsx-source" type="text/jsx-src">
 const CHART_B64 = REPORT_DATA.chartB64 || '';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
@@ -337,6 +337,18 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById('card-root')).render(<App />);
+</script>
+<script>
+  (function() {
+    var src = document.getElementById('jsx-source').textContent;
+    var result = Babel.transform(src, {
+      presets: [['react', { runtime: 'classic' }]],
+      filename: 'card.jsx'
+    });
+    var script = document.createElement('script');
+    script.textContent = result.code;
+    document.body.appendChild(script);
+  })();
 </script>
 </body>
 </html>
