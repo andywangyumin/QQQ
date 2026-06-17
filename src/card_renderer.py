@@ -115,6 +115,35 @@ def build_report_data(
 
     qd = quote_date if isinstance(quote_date, date) else date.fromisoformat(str(quote_date))
 
+    # 所有需要执行的操作指令（HARVEST / ROLL_OUT / BEAR_ADD），保持优先级顺序
+    actionable = [r for r in sorted(
+        results,
+        key=lambda r: _SIGNAL_PRIORITY.index(r.signal_type)
+                      if r.signal_type in _SIGNAL_PRIORITY else 99
+    ) if r.signal_type in ("HARVEST", "ROLL_OUT", "BEAR_ADD")]
+
+    def _action_dict(r):
+        d = {"type": r.signal_type, "positionId": r.position_id,
+             "estimatedNet": r.estimated_net}
+        if r.action_sell:
+            d["sell"] = {
+                "strike":   r.action_sell.get("strike"),
+                "expiry":   r.action_sell.get("expiry"),
+                "estBid":   r.action_sell.get("est_bid"),
+                "quantity": r.action_sell.get("quantity"),
+            }
+        if r.action_buy:
+            d["buy"] = {
+                "strike":    r.action_buy.get("strike"),
+                "expiry":    r.action_buy.get("expiry"),
+                "targetDte": r.action_buy.get("target_dte"),
+                "estAsk":    r.action_buy.get("est_ask"),
+                "quantity":  r.action_buy.get("quantity"),
+                "mode":      r.action_buy.get("mode"),
+                "estCost":   r.action_buy.get("est_cost"),
+            }
+        return d
+
     return {
         "date":           str(quote_date),
         "weekday":        _WEEKDAYS_CN[qd.weekday()],
@@ -137,6 +166,7 @@ def build_report_data(
             "invested":  round(total_option_invested),
             "remaining": round(zc_remaining),
         },
+        "actions":   [_action_dict(r) for r in actionable],
         "positions": positions,
         "chartB64":  _b64(chart_path) if chart_path and Path(chart_path).exists() else "",
         "footer":    "基准 $100,000（2026-05-24）· 估价为 BS 估算 · moomoo 操作请使用限价单（买卖中间价）",

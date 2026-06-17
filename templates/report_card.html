@@ -228,17 +228,119 @@ function Position({ p }) {
   );
 }
 
+// ── ActionBox ──────────────────────────────────────────────────────────────
+
+function ActionRow({ label, strike, expiry, qty, price, priceLabel, sub }) {
+  return (
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+                  padding:'10px 14px', background:'rgba(255,255,255,0.55)', borderRadius:6, marginBottom:6 }}>
+      <div>
+        <div style={{ ...Ty.label, color:T.textMute, marginBottom:4 }}>{label}</div>
+        <div style={{ ...Ty.bodyMono, color:T.text }}>
+          行权 ${strike} · 到期 {expiry} · {qty} 张
+        </div>
+        {sub && <div style={{ ...Ty.micro, color:T.textMute, marginTop:3 }}>{sub}</div>}
+      </div>
+      <div style={{ textAlign:'right' }}>
+        <div style={{ ...Ty.label, color:T.textMute, marginBottom:4 }}>{priceLabel}</div>
+        <div style={{ ...Ty.number, color:T.text }}>${price}</div>
+      </div>
+    </div>
+  );
+}
+
+function ActionBox({ actions }) {
+  if (!actions || actions.length === 0) return null;
+
+  const typeColors = {
+    HARVEST:  { bg:'#EAF5EE', border:'#B2DFCB', fg:T.green,  label:'收割换仓' },
+    ROLL_OUT: { bg:'#FEF4E6', border:'#FDDCB0', fg:T.amber,  label:'续杯换期' },
+    BEAR_ADD: { bg:'#FDF0EF', border:'#F5C6C3', fg:T.red,    label:'逆势加仓' },
+  };
+
+  return (
+    <div style={{ marginBottom:16 }}>
+      {actions.map((a, i) => {
+        const c = typeColors[a.type] || typeColors.ROLL_OUT;
+        const netPos = (a.estimatedNet || 0) >= 0;
+        return (
+          <div key={i} style={{ background:c.bg, border:`1px solid ${c.border}`,
+                                borderRadius:10, padding:'14px 16px', marginBottom:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <div style={{ ...Ty.title, color:c.fg }}>
+                ⚡ {c.label}
+                {a.positionId !== 'portfolio' &&
+                  <span style={{ ...Ty.bodyMono, color:T.textDim, fontWeight:400, marginLeft:8 }}>
+                    {a.positionId}
+                  </span>
+                }
+              </div>
+              {a.estimatedNet != null &&
+                <div style={{ ...Ty.number, color: netPos ? T.green : T.red }}>
+                  {netPos ? '+' : ''}${Math.abs(a.estimatedNet).toLocaleString()}
+                  <span style={{ ...Ty.micro, color:T.textMute, marginLeft:4 }}>
+                    预估{netPos ? '净收入' : '净支出'}
+                  </span>
+                </div>
+              }
+            </div>
+
+            {/* BEAR_ADD: 只有买入 */}
+            {a.type === 'BEAR_ADD' && a.buy && (
+              <div>
+                {a.buy.mode &&
+                  <div style={{ ...Ty.label, color:c.fg, marginBottom:8 }}>
+                    {a.buy.mode}
+                  </div>
+                }
+                <ActionRow
+                  label="买入新合约"
+                  strike={a.buy.strike} expiry={a.buy.expiry} qty={a.buy.quantity}
+                  price={a.buy.estAsk} priceLabel="参考买价"
+                  sub={`目标 DTE ${a.buy.targetDte} 天 · 预估成本 $${(a.buy.estCost||0).toLocaleString()}`}
+                />
+              </div>
+            )}
+
+            {/* HARVEST / ROLL_OUT: 先卖后买 */}
+            {a.type !== 'BEAR_ADD' && (
+              <div>
+                {a.sell &&
+                  <ActionRow
+                    label="卖出旧合约"
+                    strike={a.sell.strike} expiry={a.sell.expiry} qty={a.sell.quantity}
+                    price={a.sell.estBid} priceLabel="参考卖价"
+                  />
+                }
+                {a.buy &&
+                  <ActionRow
+                    label="买入新合约"
+                    strike={a.buy.strike} expiry={a.buy.expiry} qty={a.buy.quantity}
+                    price={a.buy.estAsk} priceLabel="参考买价"
+                    sub={`目标 DTE ${a.buy.targetDte} 天`}
+                  />
+                }
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Root component ─────────────────────────────────────────────────────────
 
 function App() {
   const d = REPORT_DATA;
   const qqpUp  = d.qqq.change >= 0;
   const baseUp = d.baselinePnL >= 0;
-  const posRight = d.signal === 'HOLD'             ? '无需操作'
-                 : d.signal === 'ROLL_OUT_BLOCKED'  ? '⚠ 续杯受阻，等待现金回升'
-                 : d.signal === 'BEAR_ADD_BLOCKED'  ? '⚠ 加仓受阻，等待现金回升'
-                 : d.signal === 'BEAR_ADD_COOLDOWN' ? '⏳ 加仓冷却中'
-                 : '⚠ 需执行操作';
+  const hasActions = d.actions && d.actions.length > 0;
+  const posRight = hasActions                              ? '⚠ 需执行操作'
+                 : d.signal === 'ROLL_OUT_BLOCKED'         ? '⚠ 续杯受阻，等待现金回升'
+                 : d.signal === 'BEAR_ADD_BLOCKED'         ? '⚠ 加仓受阻，等待现金回升'
+                 : d.signal === 'BEAR_ADD_COOLDOWN'        ? '⏳ 加仓冷却中'
+                 : '无需操作';
 
   return (
     <div style={{ width:620, background:T.bg, fontFamily:SANS, color:T.text,
@@ -273,6 +375,9 @@ function App() {
           subColor={qqpUp ? T.green : T.red}
         />
       </div>
+
+      {/* Action instructions — only when there are signals */}
+      {hasActions && <ActionBox actions={d.actions} />}
 
       {/* Chart */}
       <div style={{ background:T.surface, border:`1px solid ${T.border}`,
